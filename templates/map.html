@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Map - AI Bottleneck Detection</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ── NAVBAR ── */
+        .navbar {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 0 24px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+            z-index: 1000;
+        }
+
+        .navbar-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .nav-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, #e94560, #0f3460);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .navbar-brand h1 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #e6edf3;
+        }
+
+        .navbar-brand span {
+            color: #e94560;
+        }
+
+        .navbar-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(35, 197, 94, 0.1);
+            border: 1px solid rgba(35, 197, 94, 0.3);
+            color: #23c55e;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            background: #23c55e;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .user-info {
+            color: rgba(230, 237, 243, 0.6);
+            font-size: 13px;
+        }
+
+        .user-info strong {
+            color: #e6edf3;
+        }
+
+        .logout-btn {
+            background: rgba(233, 69, 96, 0.1);
+            border: 1px solid rgba(233, 69, 96, 0.3);
+            color: #e94560;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+
+        .logout-btn:hover {
+            background: rgba(233, 69, 96, 0.2);
+        }
+
+        /* ── MAIN LAYOUT ── */
+        .main-layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ── SIDEBAR ── */
+        .sidebar {
+            width: 280px;
+            background: #161b22;
+            border-right: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            overflow-y: auto;
+        }
+
+        .sidebar-section {
+            padding: 16px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .sidebar-section h3 {
+            font-size: 11px;
+            font-weight: 600;
+            color: rgba(230, 237, 243, 0.4);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 12px;
+        }
+
+        /* Map controls */
+        .control-btn {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 9px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            color: #e6edf3;
+            font-size: 13px;
+            cursor: pointer;
+            margin-bottom: 8px;
+            transition: background 0.2s, border-color 0.2s;
+            text-align: left;
+        }
+
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: #58a6ff;
+        }
+
+        .control-btn.active {
+            background: rgba(88, 166, 255, 0.1);
+            border-color: #58a6ff;
+            color: #58a6ff;
+        }
+
+        .control-btn .btn-icon {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        /* Legend */
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: rgba(230, 237, 243, 0.7);
+        }
+
+        .legend-color {
+            width: 28px;
+            height: 8px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        /* Stats */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        .stat-card .stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: #58a6ff;
+            line-height: 1;
+        }
+
+        .stat-card .stat-label {
+            font-size: 11px;
+            color: rgba(230, 237, 243, 0.4);
+            margin-top: 4px;
+            line-height: 1.3;
+        }
+
+        .stat-card.warning .stat-value { color: #f0883e; }
+        .stat-card.danger  .stat-value { color: #e94560; }
+        .stat-card.success .stat-value { color: #23c55e; }
+
+        /* Key locations list */
+        .location-list {
+            list-style: none;
+        }
+
+        .location-list li {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 0;
+            font-size: 12px;
+            color: rgba(230, 237, 243, 0.6);
+            border-bottom: 1px solid #21262d;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+
+        .location-list li:last-child { border-bottom: none; }
+        .location-list li:hover { color: #58a6ff; }
+
+        .location-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* ── MAP ── */
+        .map-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Info panel overlay */
+        .map-info-bar {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(22, 27, 34, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 8px 18px;
+            font-size: 13px;
+            color: rgba(230, 237, 243, 0.7);
+            z-index: 500;
+            white-space: nowrap;
+        }
+
+        .map-info-bar strong {
+            color: #58a6ff;
+        }
+    </style>
+</head>
+<body>
+
+<!-- NAVBAR -->
+<nav class="navbar">
+    <div class="navbar-brand">
+        <div class="nav-icon">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <circle cx="10" cy="10" r="7" fill="rgba(255,255,255,0.15)"/>
+                <circle cx="10" cy="10" r="2" fill="white"/>
+                <path d="M6 10h2M12 10h2M10 6v2M10 12v2" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+        </div>
+        <h1>AI Traffic Bottleneck Detection &mdash; <span>Mauritius</span></h1>
+    </div>
+    <div class="navbar-right">
+        <div class="status-badge">
+            <div class="status-dot"></div>
+            System Online
+        </div>
+        <div class="user-info">Logged in as <strong>{{ user }}</strong></div>
+        <a href="/logout" class="logout-btn">Sign Out</a>
+    </div>
+</nav>
+
+<!-- MAIN LAYOUT -->
+<div class="main-layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+
+        <div class="sidebar-section">
+            <h3>Map Controls</h3>
+            <button class="control-btn active" onclick="setLayer('streets')">
+                <span class="btn-icon">🗺</span> Street Map
+            </button>
+            <button class="control-btn" onclick="setLayer('satellite')">
+                <span class="btn-icon">🛰</span> Satellite View
+            </button>
+            <button class="control-btn" onclick="resetView()">
+                <span class="btn-icon">🎯</span> Reset to Mauritius
+            </button>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Traffic Legend</h3>
+            <div class="legend-item">
+                <div class="legend-color" style="background:#23c55e;"></div>
+                Free flow
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background:#f0883e;"></div>
+                Moderate congestion
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background:#e94560;"></div>
+                Heavy congestion
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background:#8b31c7;"></div>
+                Bottleneck detected
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Dashboard Overview</h3>
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="stat-value">24</div>
+                    <div class="stat-label">Monitored Segments</div>
+                </div>
+                <div class="stat-card danger">
+                    <div class="stat-value">3</div>
+                    <div class="stat-label">Bottlenecks</div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="stat-value">7</div>
+                    <div class="stat-label">Congested</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-value">14</div>
+                    <div class="stat-label">Clear Roads</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Key Locations</h3>
+            <ul class="location-list">
+                <li onclick="flyTo(-20.1609, 57.4977, 13)">
+                    <div class="location-dot" style="background:#e94560;"></div>
+                    Port Louis (Capital)
+                </li>
+                <li onclick="flyTo(-20.2648, 57.4793, 13)">
+                    <div class="location-dot" style="background:#f0883e;"></div>
+                    Quatre Bornes
+                </li>
+                <li onclick="flyTo(-20.2981, 57.4838, 13)">
+                    <div class="location-dot" style="background:#f0883e;"></div>
+                    Rose Hill
+                </li>
+                <li onclick="flyTo(-20.3226, 57.5036, 13)">
+                    <div class="location-dot" style="background:#23c55e;"></div>
+                    Curepipe
+                </li>
+                <li onclick="flyTo(-20.1928, 57.5913, 13)">
+                    <div class="location-dot" style="background:#23c55e;"></div>
+                    Mahebourg
+                </li>
+                <li onclick="flyTo(-20.0592, 57.5544, 13)">
+                    <div class="location-dot" style="background:#8b31c7;"></div>
+                    Grand Baie
+                </li>
+            </ul>
+        </div>
+
+    </aside>
+
+    <!-- MAP -->
+    <div class="map-wrapper">
+        <div class="map-info-bar">
+            Viewing: <strong>Mauritius Road Network</strong> &nbsp;|&nbsp;
+            AI detection module: <strong style="color:#f0883e;">Pending Integration</strong>
+        </div>
+        <div id="map"></div>
+    </div>
+
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    // ── Map initialisation centred on Mauritius ──
+    const MAURITIUS_CENTER = [-20.2, 57.55];
+    const DEFAULT_ZOOM = 11;
+
+    const streetTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    });
+
+    const satelliteTile = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: '&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS'
+    });
+
+    const map = L.map('map', {
+        center: MAURITIUS_CENTER,
+        zoom: DEFAULT_ZOOM,
+        layers: [streetTile],
+        zoomControl: true
+    });
+
+    let currentLayer = 'streets';
+
+    function setLayer(type) {
+        document.querySelectorAll('.control-btn').forEach(b => b.classList.remove('active'));
+        event.currentTarget.classList.add('active');
+
+        if (type === 'streets' && currentLayer !== 'streets') {
+            map.removeLayer(satelliteTile);
+            map.addLayer(streetTile);
+            currentLayer = 'streets';
+        } else if (type === 'satellite' && currentLayer !== 'satellite') {
+            map.removeLayer(streetTile);
+            map.addLayer(satelliteTile);
+            currentLayer = 'satellite';
+        }
+    }
+
+    function resetView() {
+        map.setView(MAURITIUS_CENTER, DEFAULT_ZOOM);
+    }
+
+    function flyTo(lat, lng, zoom) {
+        map.flyTo([lat, lng], zoom, { duration: 1.2 });
+    }
+
+    // ── Placeholder markers for key traffic points ──
+    const locations = [
+        { coords: [-20.1609, 57.4977], name: "Port Louis", color: "#e94560",   status: "Bottleneck detected" },
+        { coords: [-20.2648, 57.4793], name: "Quatre Bornes", color: "#f0883e", status: "Moderate congestion" },
+        { coords: [-20.2981, 57.4838], name: "Rose Hill",    color: "#f0883e", status: "Moderate congestion" },
+        { coords: [-20.3226, 57.5036], name: "Curepipe",     color: "#23c55e", status: "Free flow"           },
+        { coords: [-20.1928, 57.5913], name: "Mahebourg",    color: "#23c55e", status: "Free flow"           },
+        { coords: [-20.0592, 57.5544], name: "Grand Baie",   color: "#8b31c7", status: "Bottleneck detected" },
+    ];
+
+    locations.forEach(loc => {
+        const icon = L.divIcon({
+            className: '',
+            html: `<div style="
+                width:14px; height:14px;
+                background:${loc.color};
+                border:2px solid white;
+                border-radius:50%;
+                box-shadow: 0 0 8px ${loc.color};
+            "></div>`,
+            iconSize: [14, 14],
+            iconAnchor: [7, 7]
+        });
+
+        L.marker(loc.coords, { icon })
+            .addTo(map)
+            .bindPopup(`
+                <strong>${loc.name}</strong><br>
+                <span style="color:${loc.color};">${loc.status}</span><br>
+                <small style="color:#888;">AI analysis: pending backend</small>
+            `);
+    });
+</script>
+</body>
+</html>
