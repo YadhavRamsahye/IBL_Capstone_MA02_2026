@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request, Form, Depends
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
@@ -20,7 +21,7 @@ from detection.mock_pipeline import run_mock_pipeline
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# ── Shared detection state ────────────────────────────────────────────────────
+
 # Keyed by camera_id; updated in-place by background tasks.
 latest_detections: dict[str, dict] = {}
 
@@ -80,7 +81,7 @@ async def lifespan(app: FastAPI):
 
     yield  # application runs here
 
-    # ── Shutdown ──────────────────────────────────────────────────────────
+    
     logger.info("Shutting down detection tasks…")
     for task in tasks:
         task.cancel()
@@ -90,6 +91,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Traffic Bottleneck Detection - Mauritius", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key="traffic-mauritius-secret-key-2026")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 templates = Jinja2Templates(directory="templates")
 
@@ -150,7 +157,7 @@ async def logout(request: Request):
     return RedirectResponse(url="/login", status_code=302)
 
 
-# ── Alert store ──────────────────────────────────────────────────────────────
+
 # In-memory list of alert dicts; newest entries appended at the end.
 alert_log: list[dict] = []
 
@@ -160,7 +167,7 @@ class AlertTriggerRequest(BaseModel):
     message: str = ""
 
 
-# ── Traffic API endpoints ─────────────────────────────────────────────────────
+
 
 @app.get("/api/traffic", response_class=JSONResponse)
 async def api_traffic_all():
@@ -193,7 +200,7 @@ async def api_status():
     }
 
 
-# ── Alert endpoints ───────────────────────────────────────────────────────────
+
 
 @app.post("/api/alerts/trigger", response_class=JSONResponse, status_code=201)
 async def api_alerts_trigger(body: AlertTriggerRequest):
