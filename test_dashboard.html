@@ -400,75 +400,143 @@
   <!-- ── MAIN ────────────────────────────────────────────────────────── -->
   <div class="main">
 
-    <!-- Row 1: Camera cards -->
+    <!-- Row 1: Camera cards (2×2 grid) -->
     <div class="row row-cameras">
 
-      <!-- Camera: port_louis -->
-      <div class="card" id="card-port_louis">
+      <!-- Camera: caudan_north -->
+      <div class="card" id="card-caudan_north">
         <div class="card-header">
-          <span class="card-title">Port Louis</span>
-          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/port_louis</span>
+          <span class="card-title">Caudan North</span>
+          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/caudan_north</span>
         </div>
         <div class="cam-top">
           <div class="cam-name-row">
-            <div class="cam-dot" id="dot-port_louis"></div>
-            <span class="cam-name">port_louis</span>
+            <div class="cam-dot" id="dot-caudan_north"></div>
+            <span class="cam-name">Caudan North — Port Louis</span>
           </div>
-          <div class="severity-badge badge-free" id="badge-port_louis">FREE</div>
+          <div class="severity-badge badge-free" id="badge-caudan_north">FREE</div>
         </div>
         <div class="cam-stats">
           <div class="stat-item">
             <span class="stat-label">Vehicles</span>
-            <span class="stat-value" id="count-port_louis">—</span>
+            <span class="stat-value" id="count-caudan_north">—</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">FPS</span>
-            <span class="stat-value small" id="fps-port_louis">—</span>
+            <span class="stat-value small" id="fps-caudan_north">—</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">Frame</span>
-            <span class="stat-value small" id="frame-port_louis">—</span>
+            <span class="stat-value small" id="frame-caudan_north">—</span>
           </div>
         </div>
         <div>
           <div class="bar-chart-label">Vehicle count — last 20 readings</div>
-          <div class="bar-chart" id="chart-port_louis"></div>
+          <div class="bar-chart" id="chart-caudan_north"></div>
         </div>
-        <div class="cam-timestamp" id="ts-port_louis">—</div>
+        <div class="cam-timestamp" id="ts-caudan_north">—</div>
       </div>
 
-      <!-- Camera: grand_baie -->
-      <div class="card" id="card-grand_baie">
+      <!-- Camera: caudan_south -->
+      <div class="card" id="card-caudan_south">
         <div class="card-header">
-          <span class="card-title">Grand Baie</span>
-          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/grand_baie</span>
+          <span class="card-title">Caudan South</span>
+          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/caudan_south</span>
         </div>
         <div class="cam-top">
           <div class="cam-name-row">
-            <div class="cam-dot" id="dot-grand_baie"></div>
-            <span class="cam-name">grand_baie</span>
+            <div class="cam-dot" id="dot-caudan_south"></div>
+            <span class="cam-name">Caudan South — Port Louis</span>
           </div>
-          <div class="severity-badge badge-free" id="badge-grand_baie">FREE</div>
+          <div class="severity-badge badge-free" id="badge-caudan_south">FREE</div>
         </div>
         <div class="cam-stats">
           <div class="stat-item">
             <span class="stat-label">Vehicles</span>
-            <span class="stat-value" id="count-grand_baie">—</span>
+            <span class="stat-value" id="count-caudan_south">—</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">FPS</span>
-            <span class="stat-value small" id="fps-grand_baie">—</span>
+            <span class="stat-value small" id="fps-caudan_south">—</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">Frame</span>
-            <span class="stat-value small" id="frame-grand_baie">—</span>
+            <span class="stat-value small" id="frame-caudan_south">—</span>
           </div>
         </div>
         <div>
           <div class="bar-chart-label">Vehicle count — last 20 readings</div>
-          <div class="bar-chart" id="chart-grand_baie"></div>
+          <div class="bar-chart" id="chart-caudan_south"></div>
         </div>
-        <div class="cam-timestamp" id="ts-grand_baie">—</div>
+        <div class="cam-timestamp" id="ts-caudan_south">—</div>
+      </div>
+
+      <!-- Camera: la_chaussee -->
+      <div class="card" id="card-la_chaussee">
+        <div class="card-header">
+          <span class="card-title">La Chaussee Street</span>
+          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/la_chaussee</span>
+        </div>
+        <div class="cam-top">
+          <div class="cam-name-row">
+            <div class="cam-dot" id="dot-la_chaussee"></div>
+            <span class="cam-name">La Chaussee Street — Port Louis</span>
+          </div>
+          <div class="severity-badge badge-free" id="badge-la_chaussee">FREE</div>
+        </div>
+        <div class="cam-stats">
+          <div class="stat-item">
+            <span class="stat-label">Vehicles</span>
+            <span class="stat-value" id="count-la_chaussee">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">FPS</span>
+            <span class="stat-value small" id="fps-la_chaussee">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Frame</span>
+            <span class="stat-value small" id="frame-la_chaussee">—</span>
+          </div>
+        </div>
+        <div>
+          <div class="bar-chart-label">Vehicle count — last 20 readings</div>
+          <div class="bar-chart" id="chart-la_chaussee"></div>
+        </div>
+        <div class="cam-timestamp" id="ts-la_chaussee">—</div>
+      </div>
+
+      <!-- Camera: casernes -->
+      <div class="card" id="card-casernes">
+        <div class="card-header">
+          <span class="card-title">Casernes / Brabant St</span>
+          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/casernes</span>
+        </div>
+        <div class="cam-top">
+          <div class="cam-name-row">
+            <div class="cam-dot" id="dot-casernes"></div>
+            <span class="cam-name">Casernes / Brabant Street — Port Louis</span>
+          </div>
+          <div class="severity-badge badge-free" id="badge-casernes">FREE</div>
+        </div>
+        <div class="cam-stats">
+          <div class="stat-item">
+            <span class="stat-label">Vehicles</span>
+            <span class="stat-value" id="count-casernes">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">FPS</span>
+            <span class="stat-value small" id="fps-casernes">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Frame</span>
+            <span class="stat-value small" id="frame-casernes">—</span>
+          </div>
+        </div>
+        <div>
+          <div class="bar-chart-label">Vehicle count — last 20 readings</div>
+          <div class="bar-chart" id="chart-casernes"></div>
+        </div>
+        <div class="cam-timestamp" id="ts-casernes">—</div>
       </div>
 
     </div><!-- /row-cameras -->
@@ -563,8 +631,8 @@ const POLL_MS    = 3000;
 const CHART_SIZE = 20;
 
 // ── State ──────────────────────────────────────────────────────────────────
-const chartHistory = { port_louis: [], grand_baie: [] };
-let activeCameraIds = ['port_louis', 'grand_baie'];
+const chartHistory = { caudan_north: [], caudan_south: [], la_chaussee: [], casernes: [] };
+let activeCameraIds = ['caudan_north', 'caudan_south', 'la_chaussee', 'casernes'];
 let knownAlertIds   = new Set();
 
 // ── Severity helpers ───────────────────────────────────────────────────────
