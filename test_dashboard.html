@@ -8,7 +8,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-  /* ── Reset & base ─────────────────────────────────────────────────── */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
@@ -23,227 +22,78 @@
     --blue:      #58a6ff;
     --mono:      'JetBrains Mono', monospace;
     --sans:      'Syne', sans-serif;
-
     --free:        #23c55e;
     --moderate:    #f0883e;
     --heavy:       #e94560;
     --bottleneck:  #8b31c7;
   }
 
-  html, body {
-    height: 100%;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 13px;
-    line-height: 1.5;
-  }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; line-height: 1.5; }
+  .page { min-height: 100vh; display: flex; flex-direction: column; padding: 0 0 32px; }
 
-  /* ── Layout ───────────────────────────────────────────────────────── */
-  .page {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    padding: 0 0 32px;
-  }
-
-  /* ── Header ───────────────────────────────────────────────────────── */
-  header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 28px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-shrink: 0;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; position: sticky; top: 0; z-index: 100; }
   .header-left { display: flex; align-items: center; gap: 14px; }
-
-  .header-logo {
-    width: 38px; height: 38px;
-    background: linear-gradient(135deg, #e94560, #0f3460);
-    border-radius: 9px;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0;
-  }
+  .header-logo { width: 38px; height: 38px; background: linear-gradient(135deg, #e94560, #0f3460); border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   .header-logo svg { width: 20px; height: 20px; }
-
-  .header-titles h1 {
-    font-family: var(--sans);
-    font-size: 17px;
-    font-weight: 700;
-    color: #e8f0f8;
-    letter-spacing: -0.3px;
-  }
-  .header-titles p {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-top: 1px;
-  }
-
+  .header-titles h1 { font-family: var(--sans); font-size: 17px; font-weight: 700; color: #e8f0f8; letter-spacing: -0.3px; }
+  .header-titles p { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
   .header-right { display: flex; align-items: center; gap: 20px; }
 
-  .live-badge {
-    display: flex; align-items: center; gap: 7px;
-    font-family: var(--mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: #23c55e;
-    transition: color 0.4s;
-  }
+  .live-badge { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12px; font-weight: 600; color: #23c55e; transition: color 0.4s; }
   .live-badge.offline { color: #e94560; }
-
-  .pulse-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #23c55e;
-    transition: background 0.4s;
-    box-shadow: 0 0 0 0 rgba(35,197,94,.6);
-    animation: pulse-ring 2s infinite;
-  }
-  .live-badge.offline .pulse-dot {
-    background: #e94560;
-    box-shadow: none;
-    animation: none;
-  }
-  @keyframes pulse-ring {
-    0%   { box-shadow: 0 0 0 0 rgba(35,197,94,.6); }
-    70%  { box-shadow: 0 0 0 7px rgba(35,197,94,0); }
-    100% { box-shadow: 0 0 0 0 rgba(35,197,94,0); }
-  }
-
-  .last-refresh {
-    font-size: 11px;
-    color: var(--text-dim);
-  }
+  .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: #23c55e; transition: background 0.4s; box-shadow: 0 0 0 0 rgba(35,197,94,.6); animation: pulse-ring 2s infinite; }
+  .live-badge.offline .pulse-dot { background: #e94560; box-shadow: none; animation: none; }
+  @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(35,197,94,.6); } 70% { box-shadow: 0 0 0 7px rgba(35,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(35,197,94,0); } }
+  .last-refresh { font-size: 11px; color: var(--text-dim); }
   .last-refresh span { color: var(--text); }
 
-  /* ── Main grid ────────────────────────────────────────────────────── */
   .main { padding: 24px 28px 0; display: flex; flex-direction: column; gap: 20px; }
-
   .row { display: grid; gap: 16px; }
   .row-cameras { grid-template-columns: 1fr 1fr; }
   .row-bottom  { grid-template-columns: 1fr 1fr 1fr; }
 
-  /* ── Card ─────────────────────────────────────────────────────────── */
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    min-height: 0;
-  }
-
-  .card-header {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 10px;
-  }
-  .card-title {
-    font-family: var(--sans);
-    font-size: 13px;
-    font-weight: 600;
-    color: #d0e4f4;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-  }
-  .endpoint-tag {
-    font-size: 10px;
-    color: var(--text-dim);
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 2px 7px;
-    flex-shrink: 0;
-  }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .card-title { font-family: var(--sans); font-size: 13px; font-weight: 600; color: #d0e4f4; text-transform: uppercase; letter-spacing: 0.6px; }
+  .endpoint-tag { font-size: 10px; color: var(--text-dim); background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; flex-shrink: 0; }
   .endpoint-tag .method { color: #58a6ff; margin-right: 3px; }
 
-  /* ── Camera card internals ────────────────────────────────────────── */
-  .cam-top {
-    display: flex; align-items: center; justify-content: space-between;
-  }
+  .cam-top { display: flex; align-items: center; justify-content: space-between; }
   .cam-name-row { display: flex; align-items: center; gap: 10px; }
+  .cam-dot { width: 12px; height: 12px; border-radius: 50%; background: #23c55e; box-shadow: 0 0 8px currentColor; transition: background 0.4s, color 0.4s, box-shadow 0.4s; flex-shrink: 0; }
+  .cam-name { font-family: var(--sans); font-size: 16px; font-weight: 700; color: #e0eefa; }
 
-  .cam-dot {
-    width: 12px; height: 12px; border-radius: 50%;
-    background: #23c55e;
-    box-shadow: 0 0 8px currentColor;
-    transition: background 0.4s, color 0.4s, box-shadow 0.4s;
-    flex-shrink: 0;
-  }
-
-  .cam-name {
-    font-family: var(--sans);
-    font-size: 16px;
-    font-weight: 700;
-    color: #e0eefa;
-  }
-
-  .severity-badge {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.8px;
-    text-transform: uppercase;
-    padding: 3px 10px;
-    border-radius: 20px;
-    border: 1px solid;
-    transition: background 0.4s, border-color 0.4s, color 0.4s;
-  }
+  .severity-badge { font-size: 10px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; padding: 3px 10px; border-radius: 20px; border: 1px solid; transition: background 0.4s, border-color 0.4s, color 0.4s; }
   .badge-free       { background: rgba(35,197,94,.12);  border-color: rgba(35,197,94,.4);  color: #23c55e; }
   .badge-moderate   { background: rgba(240,136,62,.12); border-color: rgba(240,136,62,.4); color: #f0883e; }
   .badge-heavy      { background: rgba(233,69,96,.12);  border-color: rgba(233,69,96,.4);  color: #e94560; }
   .badge-bottleneck { background: rgba(139,49,199,.12); border-color: rgba(139,49,199,.4); color: #8b31c7; }
 
-  .cam-stats {
-    display: flex; gap: 24px;
-  }
+  .cam-stats { display: flex; gap: 24px; }
   .stat-item { display: flex; flex-direction: column; gap: 2px; }
   .stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
   .stat-value { font-size: 28px; font-weight: 600; color: #e8f4ff; line-height: 1; }
   .stat-value.small { font-size: 16px; }
-
   .cam-timestamp { font-size: 10px; color: var(--text-dim); }
 
-  /* ── Mini bar chart ───────────────────────────────────────────────── */
-  .bar-chart-label {
-    font-size: 10px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 6px;
-  }
-  .bar-chart {
-    display: flex;
-    align-items: flex-end;
-    gap: 3px;
-    height: 48px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 8px 4px;
-  }
-  .bar {
-    flex: 1;
-    border-radius: 2px 2px 0 0;
-    min-height: 2px;
-    transition: height 0.3s ease, background 0.4s;
-  }
+  /* AI Summary */
+  .ai-summary-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; transition: border-color 0.4s; }
+  .ai-summary-box.has-api { border-color: rgba(88,166,255,.3); }
+  .ai-summary-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ai-summary-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
+  .ai-icon { display: inline-block; width: 14px; height: 14px; background: linear-gradient(135deg, #58a6ff, #8b31c7); border-radius: 3px; text-align: center; line-height: 14px; font-size: 8px; color: white; font-weight: 700; flex-shrink: 0; }
+  .ai-source-tag { font-size: 9px; padding: 1px 6px; border-radius: 3px; font-weight: 600; letter-spacing: 0.3px; }
+  .source-claude { background: rgba(88,166,255,.12); color: #58a6ff; border: 1px solid rgba(88,166,255,.25); }
+  .source-template { background: rgba(90,122,154,.1); color: var(--text-dim); border: 1px solid var(--border); }
+  .ai-summary-text { font-size: 11.5px; line-height: 1.55; color: var(--text); }
+  .ai-summary-text.waiting { color: var(--text-dim); font-style: italic; }
 
-  /* ── Status card ──────────────────────────────────────────────────── */
+  .bar-chart-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .bar-chart { display: flex; align-items: flex-end; gap: 3px; height: 48px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px 4px; }
+  .bar { flex: 1; border-radius: 2px 2px 0 0; min-height: 2px; transition: height 0.3s ease, background 0.4s; }
+
   .status-rows { display: flex; flex-direction: column; gap: 8px; }
-  .status-row {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 10px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-  }
+  .status-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 7px; }
   .status-key  { color: var(--text-dim); font-size: 12px; }
   .status-val  { font-weight: 600; font-size: 13px; }
   .val-online  { color: #23c55e; }
@@ -251,129 +101,51 @@
   .val-warn    { color: #f0883e; }
 
   .health-list { display: flex; flex-direction: column; gap: 6px; }
-  .health-row {
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 11px;
-  }
+  .health-row { display: flex; align-items: center; justify-content: space-between; font-size: 11px; }
   .health-ep { color: var(--text-dim); }
   .health-ep .method { color: #58a6ff; }
-
-  .status-pill {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 10px;
-  }
+  .status-pill { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
   .pill-ok  { background: rgba(35,197,94,.15);  color: #23c55e; }
   .pill-err { background: rgba(233,69,96,.15);  color: #e94560; }
   .pill-201 { background: rgba(88,166,255,.15); color: #58a6ff; }
   .pill-na  { background: rgba(90,122,154,.1);  color: var(--text-dim); }
+  .section-divider { height: 1px; background: var(--border); border: none; margin: 0; }
 
-  .section-divider {
-    height: 1px;
-    background: var(--border);
-    border: none;
-    margin: 0;
-  }
-
-  /* ── Alert log card ───────────────────────────────────────────────── */
-  .alert-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 260px;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border2) transparent;
-  }
+  .alert-list { display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
   .alert-list::-webkit-scrollbar { width: 4px; }
   .alert-list::-webkit-scrollbar-track { background: transparent; }
   .alert-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
-
-  .alert-empty {
-    color: var(--text-dim);
-    font-size: 12px;
-    text-align: center;
-    padding: 20px 0;
-  }
-
-  .alert-item {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 9px 11px;
-    animation: slide-in 0.25s ease;
-  }
-  @keyframes slide-in {
-    from { opacity: 0; transform: translateY(-6px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  .alert-row1 {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 4px;
-  }
+  .alert-empty { color: var(--text-dim); font-size: 12px; text-align: center; padding: 20px 0; }
+  .alert-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 7px; padding: 9px 11px; animation: slide-in 0.25s ease; }
+  @keyframes slide-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  .alert-row1 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
   .alert-cam  { font-weight: 600; font-size: 12px; color: #cce4ff; }
   .alert-ts   { font-size: 10px; color: var(--text-dim); }
   .alert-row2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .alert-msg  { font-size: 11px; color: var(--text-dim); font-style: italic; }
+  .alert-summary { width: 100%; margin-top: 6px; padding: 7px 9px; background: rgba(88,166,255,.05); border: 1px solid rgba(88,166,255,.12); border-radius: 5px; font-size: 11px; line-height: 1.5; color: var(--text); }
+  .alert-summary-label { font-size: 9px; color: #58a6ff; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; font-weight: 600; }
 
-  .trigger-btn {
-    width: 100%;
-    padding: 10px;
-    background: rgba(233,69,96,.1);
-    border: 1px solid rgba(233,69,96,.35);
-    border-radius: 8px;
-    color: #e94560;
-    font-family: var(--mono);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s, transform 0.1s;
-    letter-spacing: 0.3px;
-  }
+  .trigger-btn { width: 100%; padding: 10px; background: rgba(233,69,96,.1); border: 1px solid rgba(233,69,96,.35); border-radius: 8px; color: #e94560; font-family: var(--mono); font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.2s, transform 0.1s; letter-spacing: 0.3px; }
   .trigger-btn:hover  { background: rgba(233,69,96,.18); }
   .trigger-btn:active { transform: scale(0.98); }
   .trigger-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-  /* ── Raw JSON card ────────────────────────────────────────────────── */
-  .json-box {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 14px;
-    overflow-y: auto;
-    max-height: 340px;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    line-height: 1.65;
-    white-space: pre;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border2) transparent;
-  }
+  .json-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 7px; padding: 14px; overflow-y: auto; max-height: 340px; font-family: var(--mono); font-size: 11.5px; line-height: 1.65; white-space: pre; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
   .json-box::-webkit-scrollbar { width: 4px; }
   .json-box::-webkit-scrollbar-track { background: transparent; }
   .json-box::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .j-key { color: #58a6ff; } .j-str { color: #a5d6ff; } .j-num { color: #f0883e; } .j-bool { color: #23c55e; } .j-null { color: #8b31c7; }
 
-  .j-key    { color: #58a6ff; }
-  .j-str    { color: #a5d6ff; }
-  .j-num    { color: #f0883e; }
-  .j-bool   { color: #23c55e; }
-  .j-null   { color: #8b31c7; }
-  .j-punct  { color: var(--text-dim); }
+  .cameras-loading { grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--text-dim); font-size: 13px; }
+  .cameras-loading .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border2); border-top-color: var(--blue); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── Footer note ──────────────────────────────────────────────────── */
-  .footer {
-    text-align: center;
-    margin-top: 20px;
-    font-size: 11px;
-    color: var(--text-dim);
-  }
+  .footer { text-align: center; margin-top: 20px; font-size: 11px; color: var(--text-dim); }
 </style>
 </head>
 <body>
 <div class="page">
-
-  <!-- ── HEADER ──────────────────────────────────────────────────────── -->
   <header>
     <div class="header-left">
       <div class="header-logo">
@@ -397,216 +169,52 @@
     </div>
   </header>
 
-  <!-- ── MAIN ────────────────────────────────────────────────────────── -->
   <div class="main">
+    <!-- Camera cards: auto-populated from /api/cameras -->
+    <div class="row row-cameras" id="cameraGrid">
+      <div class="cameras-loading"><div class="spinner"></div><br>Discovering cameras…</div>
+    </div>
 
-    <!-- Row 1: Camera cards (2×2 grid) -->
-    <div class="row row-cameras">
-
-      <!-- Camera: caudan_north -->
-      <div class="card" id="card-caudan_north">
-        <div class="card-header">
-          <span class="card-title">Caudan North</span>
-          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/caudan_north</span>
-        </div>
-        <div class="cam-top">
-          <div class="cam-name-row">
-            <div class="cam-dot" id="dot-caudan_north"></div>
-            <span class="cam-name">Caudan North — Port Louis</span>
-          </div>
-          <div class="severity-badge badge-free" id="badge-caudan_north">FREE</div>
-        </div>
-        <div class="cam-stats">
-          <div class="stat-item">
-            <span class="stat-label">Vehicles</span>
-            <span class="stat-value" id="count-caudan_north">—</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">FPS</span>
-            <span class="stat-value small" id="fps-caudan_north">—</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Frame</span>
-            <span class="stat-value small" id="frame-caudan_north">—</span>
-          </div>
-        </div>
-        <div>
-          <div class="bar-chart-label">Vehicle count — last 20 readings</div>
-          <div class="bar-chart" id="chart-caudan_north"></div>
-        </div>
-        <div class="cam-timestamp" id="ts-caudan_north">—</div>
-      </div>
-
-      <!-- Camera: caudan_south -->
-      <div class="card" id="card-caudan_south">
-        <div class="card-header">
-          <span class="card-title">Caudan South</span>
-          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/caudan_south</span>
-        </div>
-        <div class="cam-top">
-          <div class="cam-name-row">
-            <div class="cam-dot" id="dot-caudan_south"></div>
-            <span class="cam-name">Caudan South — Port Louis</span>
-          </div>
-          <div class="severity-badge badge-free" id="badge-caudan_south">FREE</div>
-        </div>
-        <div class="cam-stats">
-          <div class="stat-item">
-            <span class="stat-label">Vehicles</span>
-            <span class="stat-value" id="count-caudan_south">—</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">FPS</span>
-            <span class="stat-value small" id="fps-caudan_south">—</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Frame</span>
-            <span class="stat-value small" id="frame-caudan_south">—</span>
-          </div>
-        </div>
-        <div>
-          <div class="bar-chart-label">Vehicle count — last 20 readings</div>
-          <div class="bar-chart" id="chart-caudan_south"></div>
-        </div>
-        <div class="cam-timestamp" id="ts-caudan_south">—</div>
-      </div>
-
-      <!-- Camera: la_chaussee -->
-      <div class="card" id="card-la_chaussee">
-        <div class="card-header">
-          <span class="card-title">La Chaussee Street</span>
-          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/la_chaussee</span>
-        </div>
-        <div class="cam-top">
-          <div class="cam-name-row">
-            <div class="cam-dot" id="dot-la_chaussee"></div>
-            <span class="cam-name">La Chaussee Street — Port Louis</span>
-          </div>
-          <div class="severity-badge badge-free" id="badge-la_chaussee">FREE</div>
-        </div>
-        <div class="cam-stats">
-          <div class="stat-item">
-            <span class="stat-label">Vehicles</span>
-            <span class="stat-value" id="count-la_chaussee">—</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">FPS</span>
-            <span class="stat-value small" id="fps-la_chaussee">—</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Frame</span>
-            <span class="stat-value small" id="frame-la_chaussee">—</span>
-          </div>
-        </div>
-        <div>
-          <div class="bar-chart-label">Vehicle count — last 20 readings</div>
-          <div class="bar-chart" id="chart-la_chaussee"></div>
-        </div>
-        <div class="cam-timestamp" id="ts-la_chaussee">—</div>
-      </div>
-
-      <!-- Camera: casernes -->
-      <div class="card" id="card-casernes">
-        <div class="card-header">
-          <span class="card-title">Casernes / Brabant St</span>
-          <span class="endpoint-tag"><span class="method">GET</span>/api/traffic/casernes</span>
-        </div>
-        <div class="cam-top">
-          <div class="cam-name-row">
-            <div class="cam-dot" id="dot-casernes"></div>
-            <span class="cam-name">Casernes / Brabant Street — Port Louis</span>
-          </div>
-          <div class="severity-badge badge-free" id="badge-casernes">FREE</div>
-        </div>
-        <div class="cam-stats">
-          <div class="stat-item">
-            <span class="stat-label">Vehicles</span>
-            <span class="stat-value" id="count-casernes">—</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">FPS</span>
-            <span class="stat-value small" id="fps-casernes">—</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Frame</span>
-            <span class="stat-value small" id="frame-casernes">—</span>
-          </div>
-        </div>
-        <div>
-          <div class="bar-chart-label">Vehicle count — last 20 readings</div>
-          <div class="bar-chart" id="chart-casernes"></div>
-        </div>
-        <div class="cam-timestamp" id="ts-casernes">—</div>
-      </div>
-
-    </div><!-- /row-cameras -->
-
-    <!-- Row 2: Status / Alerts / Raw JSON -->
     <div class="row row-bottom">
-
-      <!-- Column 1: System Status -->
+      <!-- System Status -->
       <div class="card">
         <div class="card-header">
           <span class="card-title">System Status</span>
           <span class="endpoint-tag"><span class="method">GET</span>/api/status</span>
         </div>
         <div class="status-rows">
-          <div class="status-row">
-            <span class="status-key">system</span>
-            <span class="status-val val-online" id="sv-system">—</span>
-          </div>
-          <div class="status-row">
-            <span class="status-key">active_cameras</span>
-            <span class="status-val" id="sv-cameras">—</span>
-          </div>
-          <div class="status-row">
-            <span class="status-key">total_detections</span>
-            <span class="status-val" id="sv-total">—</span>
-          </div>
-          <div class="status-row">
-            <span class="status-key">bottlenecks</span>
-            <span class="status-val" id="sv-bottlenecks">—</span>
-          </div>
+          <div class="status-row"><span class="status-key">system</span><span class="status-val val-online" id="sv-system">—</span></div>
+          <div class="status-row"><span class="status-key">active_cameras</span><span class="status-val" id="sv-cameras">—</span></div>
+          <div class="status-row"><span class="status-key">total_detections</span><span class="status-val" id="sv-total">—</span></div>
+          <div class="status-row"><span class="status-key">bottlenecks</span><span class="status-val" id="sv-bottlenecks">—</span></div>
         </div>
         <hr class="section-divider">
         <div>
           <div class="bar-chart-label" style="margin-bottom:10px">Endpoint Health</div>
           <div class="health-list">
-            <div class="health-row">
-              <span class="health-ep"><span class="method">GET</span> /api/traffic</span>
-              <span class="status-pill pill-na" id="hp-traffic">—</span>
-            </div>
-            <div class="health-row">
-              <span class="health-ep"><span class="method">GET</span> /api/status</span>
-              <span class="status-pill pill-na" id="hp-status">—</span>
-            </div>
-            <div class="health-row">
-              <span class="health-ep"><span class="method">GET</span> /api/alerts</span>
-              <span class="status-pill pill-na" id="hp-alerts">—</span>
-            </div>
-            <div class="health-row">
-              <span class="health-ep"><span class="method">POST</span> /api/alerts/trigger</span>
-              <span class="status-pill pill-na" id="hp-trigger">—</span>
-            </div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/traffic</span><span class="status-pill pill-na" id="hp-traffic">—</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/status</span><span class="status-pill pill-na" id="hp-status">—</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/alerts</span><span class="status-pill pill-na" id="hp-alerts">—</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/summaries</span><span class="status-pill pill-na" id="hp-summaries">—</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/cameras</span><span class="status-pill pill-na" id="hp-cameras">—</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">POST</span> /api/alerts/trigger</span><span class="status-pill pill-na" id="hp-trigger">—</span></div>
           </div>
         </div>
       </div>
 
-      <!-- Column 2: Alert Log -->
+      <!-- Alert Log -->
       <div class="card">
         <div class="card-header">
           <span class="card-title">Alert Log</span>
           <span class="endpoint-tag"><span class="method">GET</span>/api/alerts</span>
         </div>
         <div class="alert-list" id="alertList">
-          <div class="alert-empty" id="alertEmpty">No alerts yet — trigger one below</div>
+          <div class="alert-empty" id="alertEmpty">No alerts yet — trigger one below or wait for auto-alerts</div>
         </div>
-        <button class="trigger-btn" id="triggerBtn" onclick="triggerAlert()">
-          ⚡ Trigger test alert
-        </button>
+        <button class="trigger-btn" id="triggerBtn" onclick="triggerAlert()">⚡ Trigger test alert</button>
       </div>
 
-      <!-- Column 3: Raw JSON -->
+      <!-- Raw JSON -->
       <div class="card">
         <div class="card-header">
           <span class="card-title">Raw JSON</span>
@@ -614,275 +222,195 @@
         </div>
         <div class="json-box" id="jsonBox">Waiting for data…</div>
       </div>
-
-    </div><!-- /row-bottom -->
+    </div>
 
     <div class="footer">IBL Capstone MA02 2026 &nbsp;·&nbsp; AI Traffic Bottleneck Detection — Mauritius</div>
-
-  </div><!-- /main -->
-</div><!-- /page -->
+  </div>
+</div>
 
 <script>
 'use strict';
+const API_BASE = 'http://localhost:8000', POLL_MS = 3000, CHART_SIZE = 20;
+const chartHistory = {};
+let activeCameraIds = [], knownAlertIds = new Set(), camerasBuilt = false;
 
-// ── Config ─────────────────────────────────────────────────────────────────
-const API_BASE   = 'http://localhost:8000';
-const POLL_MS    = 3000;
-const CHART_SIZE = 20;
-
-// ── State ──────────────────────────────────────────────────────────────────
-const chartHistory = { caudan_north: [], caudan_south: [], la_chaussee: [], casernes: [] };
-let activeCameraIds = ['caudan_north', 'caudan_south', 'la_chaussee', 'casernes'];
-let knownAlertIds   = new Set();
-
-// ── Severity helpers ───────────────────────────────────────────────────────
-const SEVERITY_COLORS = {
-  free:        '#23c55e',
-  moderate:    '#f0883e',
-  heavy:       '#e94560',
-  bottleneck:  '#8b31c7',
-};
-
-function severityColor(sev) {
-  return SEVERITY_COLORS[sev] ?? '#5a7a9a';
-}
-
-// ── DOM helpers ────────────────────────────────────────────────────────────
-function el(id)        { return document.getElementById(id); }
+const SEV_COL = { free:'#23c55e', moderate:'#f0883e', heavy:'#e94560', bottleneck:'#8b31c7' };
+function sevCol(s) { return SEV_COL[s] || '#5a7a9a'; }
+function el(id) { return document.getElementById(id); }
 function setText(id, v) { const e = el(id); if (e) e.textContent = v; }
+function displayName(id) { return id.replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase()); }
 
-function setPill(id, code, method = 'GET') {
-  const e = el(id);
-  if (!e) return;
-  if (code === null) {
-    e.textContent = '—';
-    e.className = 'status-pill pill-na';
-  } else if (code === 200) {
-    e.textContent = '200';
-    e.className = 'status-pill pill-ok';
-  } else if (code === 201) {
-    e.textContent = '201';
-    e.className = 'status-pill pill-201';
-  } else {
-    e.textContent = 'ERR';
-    e.className = 'status-pill pill-err';
-  }
+function setPill(id, code) {
+  const e = el(id); if (!e) return;
+  if (code === null)    { e.textContent='—';   e.className='status-pill pill-na'; }
+  else if (code === 200){ e.textContent='200'; e.className='status-pill pill-ok'; }
+  else if (code === 201){ e.textContent='201'; e.className='status-pill pill-201'; }
+  else                  { e.textContent='ERR'; e.className='status-pill pill-err'; }
 }
 
-// ── Syntax highlighting ────────────────────────────────────────────────────
 function highlight(obj) {
-  const json = JSON.stringify(obj, null, 2);
-  return json
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(
-      /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
-      match => {
-        if (/^"/.test(match)) {
-          if (/:$/.test(match))
-            return `<span class="j-key">${match}</span>`;
-          return `<span class="j-str">${match}</span>`;
-        }
-        if (/true|false/.test(match)) return `<span class="j-bool">${match}</span>`;
-        if (/null/.test(match))       return `<span class="j-null">${match}</span>`;
-        return `<span class="j-num">${match}</span>`;
-      }
-    );
+  return JSON.stringify(obj,null,2)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+      m => /^"/.test(m) ? (/:$/.test(m)?`<span class="j-key">${m}</span>`:`<span class="j-str">${m}</span>`)
+           : /true|false/.test(m)?`<span class="j-bool">${m}</span>`
+           : /null/.test(m)?`<span class="j-null">${m}</span>`
+           : `<span class="j-num">${m}</span>`);
 }
 
-// ── Bar chart ──────────────────────────────────────────────────────────────
-function updateChart(camId, count, severity) {
-  const hist = chartHistory[camId];
-  hist.push({ count, severity });
-  if (hist.length > CHART_SIZE) hist.shift();
+function buildCameraCard(camId, name) {
+  chartHistory[camId] = [];
+  return `<div class="card" id="card-${camId}">
+    <div class="card-header"><span class="card-title">${name}</span><span class="endpoint-tag"><span class="method">GET</span>/api/traffic/${camId}</span></div>
+    <div class="cam-top">
+      <div class="cam-name-row"><div class="cam-dot" id="dot-${camId}"></div><span class="cam-name">${name}</span></div>
+      <div class="severity-badge badge-free" id="badge-${camId}">FREE</div>
+    </div>
+    <div class="cam-stats">
+      <div class="stat-item"><span class="stat-label">Vehicles</span><span class="stat-value" id="count-${camId}">—</span></div>
+      <div class="stat-item"><span class="stat-label">FPS</span><span class="stat-value small" id="fps-${camId}">—</span></div>
+      <div class="stat-item"><span class="stat-label">Frame</span><span class="stat-value small" id="frame-${camId}">—</span></div>
+    </div>
+    <div class="ai-summary-box" id="summary-box-${camId}">
+      <div class="ai-summary-header">
+        <span class="ai-summary-label"><span class="ai-icon">AI</span> Traffic Summary</span>
+        <span class="ai-source-tag source-template" id="summary-source-${camId}">waiting</span>
+      </div>
+      <div class="ai-summary-text waiting" id="summary-text-${camId}">Generating summary…</div>
+    </div>
+    <div><div class="bar-chart-label">Vehicle count — last ${CHART_SIZE} readings</div><div class="bar-chart" id="chart-${camId}"></div></div>
+    <div class="cam-timestamp" id="ts-${camId}">—</div>
+  </div>`;
+}
 
-  const container = el('chart-' + camId);
-  if (!container) return;
+async function discoverCameras() {
+  try {
+    const res = await fetch(API_BASE+'/api/cameras');
+    setPill('hp-cameras', res.status);
+    if (!res.ok) throw 0;
+    const cams = await res.json();
+    const grid = el('cameraGrid');
+    if (!cams.length) { grid.innerHTML='<div class="cameras-loading">No cameras found</div>'; return; }
+    activeCameraIds = cams.map(c=>c.camera_id);
+    grid.innerHTML = cams.map(c=>buildCameraCard(c.camera_id, c.name||displayName(c.camera_id))).join('');
+    camerasBuilt = true;
+  } catch { setPill('hp-cameras','ERR'); }
+}
 
-  const max = Math.max(...hist.map(h => h.count), 1);
-  container.innerHTML = '';
-
-  hist.forEach((h, i) => {
-    const pct     = Math.max(4, Math.round((h.count / max) * 100));
-    const opacity = 0.25 + (i / (hist.length - 1 || 1)) * 0.75;
-    const bar     = document.createElement('div');
-    bar.className = 'bar';
-    bar.style.cssText = `
-      height: ${pct}%;
-      background: ${severityColor(h.severity)};
-      opacity: ${opacity.toFixed(2)};
-    `;
-    container.appendChild(bar);
+function updateChart(camId, count, sev) {
+  const hist = chartHistory[camId]; if (!hist) return;
+  hist.push({count,severity:sev}); if (hist.length>CHART_SIZE) hist.shift();
+  const c = el('chart-'+camId); if (!c) return;
+  const max = Math.max(...hist.map(h=>h.count),1);
+  c.innerHTML = '';
+  hist.forEach((h,i)=>{
+    const pct = Math.max(4, Math.round((h.count/max)*100));
+    const op = 0.25+(i/(hist.length-1||1))*0.75;
+    const b = document.createElement('div');
+    b.className='bar';
+    b.style.cssText=`height:${pct}%;background:${sevCol(h.severity)};opacity:${op.toFixed(2)};`;
+    c.appendChild(b);
   });
 }
 
-// ── Camera card update ─────────────────────────────────────────────────────
 function updateCamera(data) {
-  const id = data.camera_id;
-  const sev = data.severity ?? 'free';
-  const col = data.color ?? severityColor(sev);
-
-  // Dot color + glow
-  const dot = el('dot-' + id);
-  if (dot) {
-    dot.style.background  = col;
-    dot.style.color       = col;          // for currentColor glow
-    dot.style.boxShadow   = `0 0 8px ${col}`;
-  }
-
-  // Severity badge
-  const badge = el('badge-' + id);
-  if (badge) {
-    badge.textContent = sev.toUpperCase();
-    badge.className   = `severity-badge badge-${sev}`;
-  }
-
-  setText('count-' + id, data.vehicle_count ?? '—');
-  setText('fps-'   + id, data.fps_processed != null ? data.fps_processed.toFixed(1) : '—');
-
-  const shape = data.frame_shape;
-  setText('frame-' + id, shape ? `${shape[1]}×${shape[0]}` : '—');
-  setText('ts-'    + id, data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : '—');
-
-  updateChart(id, data.vehicle_count ?? 0, sev);
+  const id=data.camera_id; if (!el('card-'+id)) return;
+  const sev=data.severity||'free', col=data.color||sevCol(sev);
+  const dot=el('dot-'+id);
+  if(dot){dot.style.background=col;dot.style.color=col;dot.style.boxShadow=`0 0 8px ${col}`;}
+  const badge=el('badge-'+id);
+  if(badge){badge.textContent=sev.toUpperCase();badge.className=`severity-badge badge-${sev}`;}
+  setText('count-'+id, data.vehicle_count??'—');
+  setText('fps-'+id, data.fps_processed!=null?data.fps_processed.toFixed(1):'—');
+  const sh=data.frame_shape;
+  setText('frame-'+id, sh?`${sh[1]}×${sh[0]}`:'—');
+  setText('ts-'+id, data.timestamp?new Date(data.timestamp).toLocaleTimeString():'—');
+  updateChart(id, data.vehicle_count||0, sev);
 }
 
-// ── System status update ───────────────────────────────────────────────────
+function updateSummaries(summaries) {
+  for (const [camId, data] of Object.entries(summaries)) {
+    const t=el('summary-text-'+camId), s=el('summary-source-'+camId), b=el('summary-box-'+camId);
+    if(!t||!s) continue;
+    t.textContent=data.summary; t.classList.remove('waiting');
+    if(data.source==='claude_api'){
+      s.textContent='Claude AI'; s.className='ai-source-tag source-claude';
+      if(b) b.classList.add('has-api');
+    } else {
+      s.textContent='Template'; s.className='ai-source-tag source-template';
+      if(b) b.classList.remove('has-api');
+    }
+  }
+}
+
 function updateStatus(data) {
-  const sysEl = el('sv-system');
-  if (sysEl) {
-    sysEl.textContent = data.system ?? '—';
-    sysEl.className   = 'status-val ' + (data.system === 'online' ? 'val-online' : 'val-offline');
-  }
-  setText('sv-cameras',     data.active_cameras   ?? '—');
-  setText('sv-total',       data.total_detections ?? '—');
-
-  const bnEl = el('sv-bottlenecks');
-  if (bnEl) {
-    bnEl.textContent = data.bottlenecks ?? '—';
-    bnEl.className   = 'status-val ' + (data.bottlenecks > 0 ? 'val-offline' : '');
-  }
+  const sys=el('sv-system');
+  if(sys){sys.textContent=data.system||'—';sys.className='status-val '+(data.system==='online'?'val-online':'val-offline');}
+  setText('sv-cameras',data.active_cameras||'—');
+  setText('sv-total',data.total_detections||'—');
+  const bn=el('sv-bottlenecks');
+  if(bn){bn.textContent=data.bottlenecks||'—';bn.className='status-val '+(data.bottlenecks>0?'val-offline':'');}
 }
 
-// ── Alert log update ───────────────────────────────────────────────────────
 function updateAlerts(alerts) {
-  const list  = el('alertList');
-  const empty = el('alertEmpty');
-  if (!list) return;
-
-  if (!alerts.length) {
-    if (empty) empty.style.display = '';
-    return;
-  }
-  if (empty) empty.style.display = 'none';
-
-  alerts.forEach(a => {
-    if (knownAlertIds.has(a.alert_id)) return;
+  const list=el('alertList'), empty=el('alertEmpty');
+  if(!list) return;
+  if(!alerts.length){if(empty)empty.style.display='';return;}
+  if(empty)empty.style.display='none';
+  alerts.forEach(a=>{
+    if(knownAlertIds.has(a.alert_id)) return;
     knownAlertIds.add(a.alert_id);
-
-    const col = a.color ?? severityColor(a.severity);
-    const ts  = a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '';
-
-    const item = document.createElement('div');
-    item.className = 'alert-item';
-    item.innerHTML = `
-      <div class="alert-row1">
-        <span class="alert-cam">${a.camera_id}</span>
-        <span class="alert-ts">${ts}</span>
-      </div>
-      <div class="alert-row2">
-        <span class="severity-badge badge-${a.severity}" style="font-size:9px;padding:2px 7px;">${a.severity.toUpperCase()}</span>
-        <span style="color:${col};font-size:11px;font-weight:600;">${a.vehicle_count} vehicles</span>
-        ${a.message ? `<span class="alert-msg">"${a.message}"</span>` : ''}
-      </div>`;
-
-    // Prepend so newest is at top
+    const col=a.color||sevCol(a.severity), ts=a.timestamp?new Date(a.timestamp).toLocaleTimeString():'';
+    let summaryHtml='';
+    if(a.summary){
+      const src=a.source==='claude_api'?'Claude AI':'Template';
+      summaryHtml=`<div class="alert-summary"><div class="alert-summary-label">AI Analysis — ${src}</div>${a.summary}</div>`;
+    } else if(a.message){
+      summaryHtml=`<div class="alert-summary"><div class="alert-summary-label">Message</div>${a.message}</div>`;
+    }
+    const item=document.createElement('div');
+    item.className='alert-item';
+    item.innerHTML=`<div class="alert-row1"><span class="alert-cam">${displayName(a.camera_id)}</span><span class="alert-ts">${ts}</span></div>
+      <div class="alert-row2"><span class="severity-badge badge-${a.severity}" style="font-size:9px;padding:2px 7px;">${a.severity.toUpperCase()}</span>
+      <span style="color:${col};font-size:11px;font-weight:600;">${a.vehicle_count} vehicles</span></div>${summaryHtml}`;
     list.insertBefore(item, list.firstChild);
   });
 }
 
-// ── Trigger alert ──────────────────────────────────────────────────────────
 async function triggerAlert() {
-  const btn = el('triggerBtn');
-  btn.disabled = true;
-  btn.textContent = '⚡ Sending…';
-
-  const camId = activeCameraIds[Math.floor(Math.random() * activeCameraIds.length)];
-
+  const btn=el('triggerBtn'); btn.disabled=true; btn.textContent='⚡ Sending…';
+  const camId=activeCameraIds[Math.floor(Math.random()*activeCameraIds.length)];
   try {
-    const res = await fetch(`${API_BASE}/api/alerts/trigger`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ camera_id: camId, message: 'Manual test from dashboard' }),
-    });
-    setPill('hp-trigger', res.status);
-  } catch {
-    setPill('hp-trigger', 'ERR');
-  } finally {
-    btn.disabled    = false;
-    btn.textContent = '⚡ Trigger test alert';
-  }
+    const res=await fetch(API_BASE+'/api/alerts/trigger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({camera_id:camId})});
+    setPill('hp-trigger',res.status);
+    if(res.ok){const alert=await res.json();updateAlerts([alert]);}
+  } catch{setPill('hp-trigger','ERR');}
+  finally{btn.disabled=false;btn.textContent='⚡ Trigger test alert';}
 }
 
-// ── Server online/offline ──────────────────────────────────────────────────
 function setServerState(online) {
-  const badge = el('liveBadge');
-  const label = el('liveLabel');
-  if (!badge || !label) return;
-  if (online) {
-    badge.classList.remove('offline');
-    label.textContent = 'Live';
-  } else {
-    badge.classList.add('offline');
-    label.textContent = 'Offline';
-  }
+  const b=el('liveBadge'),l=el('liveLabel');if(!b||!l)return;
+  if(online){b.classList.remove('offline');l.textContent='Live';}
+  else{b.classList.add('offline');l.textContent='Offline';}
 }
 
-// ── Main poll loop ─────────────────────────────────────────────────────────
 async function poll() {
-  let anySuccess = false;
-
-  const [trafficRes, statusRes, alertsRes] = await Promise.all([
-    fetch(`${API_BASE}/api/traffic`).then(r => ({ ok: r.ok, status: r.status, data: r.json() })).catch(() => null),
-    fetch(`${API_BASE}/api/status`).then(r  => ({ ok: r.ok, status: r.status, data: r.json() })).catch(() => null),
-    fetch(`${API_BASE}/api/alerts?limit=10`).then(r => ({ ok: r.ok, status: r.status, data: r.json() })).catch(() => null),
+  if(!camerasBuilt){await discoverCameras();if(!camerasBuilt){setServerState(false);setText('lastRefresh',new Date().toLocaleTimeString());return;}}
+  let ok=false;
+  const [tR,sR,aR,smR]=await Promise.all([
+    fetch(API_BASE+'/api/traffic').then(r=>({ok:r.ok,status:r.status,data:r.json()})).catch(()=>null),
+    fetch(API_BASE+'/api/status').then(r=>({ok:r.ok,status:r.status,data:r.json()})).catch(()=>null),
+    fetch(API_BASE+'/api/alerts?limit=20').then(r=>({ok:r.ok,status:r.status,data:r.json()})).catch(()=>null),
+    fetch(API_BASE+'/api/summaries').then(r=>({ok:r.ok,status:r.status,data:r.json()})).catch(()=>null),
   ]);
-
-  // /api/traffic
-  if (trafficRes && trafficRes.ok) {
-    anySuccess = true;
-    setPill('hp-traffic', trafficRes.status);
-    const data = await trafficRes.data;
-    activeCameraIds = Object.keys(data);
-    for (const cam of Object.values(data)) updateCamera(cam);
-    el('jsonBox').innerHTML = highlight(data);
-  } else {
-    setPill('hp-traffic', null);
-    if (trafficRes) setPill('hp-traffic', 'ERR');
-  }
-
-  // /api/status
-  if (statusRes && statusRes.ok) {
-    anySuccess = true;
-    setPill('hp-status', statusRes.status);
-    updateStatus(await statusRes.data);
-  } else {
-    setPill('hp-status', statusRes ? 'ERR' : null);
-  }
-
-  // /api/alerts
-  if (alertsRes && alertsRes.ok) {
-    anySuccess = true;
-    setPill('hp-alerts', alertsRes.status);
-    updateAlerts(await alertsRes.data);
-  } else {
-    setPill('hp-alerts', alertsRes ? 'ERR' : null);
-  }
-
-  setServerState(anySuccess);
-  setText('lastRefresh', new Date().toLocaleTimeString());
+  if(tR&&tR.ok){ok=true;setPill('hp-traffic',tR.status);const d=await tR.data;for(const c of Object.values(d))updateCamera(c);el('jsonBox').innerHTML=highlight(d);}else setPill('hp-traffic',tR?'ERR':null);
+  if(sR&&sR.ok){ok=true;setPill('hp-status',sR.status);updateStatus(await sR.data);}else setPill('hp-status',sR?'ERR':null);
+  if(aR&&aR.ok){ok=true;setPill('hp-alerts',aR.status);updateAlerts(await aR.data);}else setPill('hp-alerts',aR?'ERR':null);
+  if(smR&&smR.ok){ok=true;setPill('hp-summaries',smR.status);updateSummaries(await smR.data);}else setPill('hp-summaries',smR?'ERR':null);
+  setServerState(ok);
+  setText('lastRefresh',new Date().toLocaleTimeString());
 }
 
-// ── Boot ───────────────────────────────────────────────────────────────────
 poll();
 setInterval(poll, POLL_MS);
 </script>
