@@ -15,11 +15,17 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (if present) before any
+# module tries to read ANTHROPIC_API_KEY or other secrets.
+load_dotenv()
 
 from detection.mock_pipeline import run_mock_pipeline
 from detection.pipeline import run_pipeline
 from detection.hls_pipeline import run_hls_pipeline
 from detection.trafficwatch import discover_cameras
+from detection.claude_api import summary_service
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +40,75 @@ _active_cameras: list[dict] = []
 # Interval (seconds) between successive reads from the mock generator.
 _POLL_INTERVAL = 3.0
 
+# Minimum seconds between Claude API summary requests per camera.
+# Prevents flooding the API on every frame (mock yields ~7.5 fps).
+_SUMMARY_COOLDOWN = 30.0
+
+# Track the last severity per camera so we only generate alerts on
+# severity *transitions* (e.g., moderate -> heavy), not every frame.
+_last_severity: dict[str, str] = {}
+
+# Track the last summary generation time per camera for cooldown.
+_last_summary_time: dict[str, float] = {}
+
+
+async def _process_detection(camera_id: str, result: dict) -> None:
+    """Post-detection hook: generate Claude summaries and auto-trigger alerts.
+
+    Called after every detection result is stored in ``latest_detections``.
+    Respects cooldown to avoid excessive API calls.
+    """
+    import time as _time
+
+    now = _time.monotonic()
+    prev_time = _last_summary_time.get(camera_id, 0.0)
+    prev_severity = _last_severity.get(camera_id, "free")
+    current_severity = result["severity"]
+
+    # Determine whether we should generate a new summary right now.
+    cooldown_elapsed = (now - prev_time) >= _SUMMARY_COOLDOWN
+    severity_changed = current_severity != prev_severity
+
+    if not cooldown_elapsed and not severity_changed:
+        return  # skip — too soon and nothing changed
+
+    _last_severity[camera_id] = current_severity
+    _last_summary_time[camera_id] = now
+
+    # Generate the summary in the background (non-blocking).
+    try:
+        summary = await summary_service.generate_summary(result)
+        logger.info(
+            "[%s] Summary generated (source=%s): %.60s…",
+            camera_id, summary.source, summary.summary,
+        )
+    except Exception as exc:
+        logger.error("[%s] Summary generation error: %s", camera_id, exc)
+        return
+
+    # Auto-trigger alert on transition TO heavy or bottleneck.
+    if severity_changed and current_severity in ("heavy", "bottleneck"):
+        try:
+            alert_summary = await summary_service.generate_alert_description(result)
+            alert = {
+                "alert_id":      str(uuid.uuid4()),
+                "camera_id":     camera_id,
+                "severity":      current_severity,
+                "vehicle_count": result["vehicle_count"],
+                "color":         result["color"],
+                "timestamp":     datetime.now(timezone.utc).isoformat(),
+                "message":       alert_summary.summary,
+                "summary":       summary.summary,
+                "source":        alert_summary.source,
+            }
+            alert_log.append(alert)
+            logger.info(
+                "Auto-alert created: %s camera=%s severity=%s",
+                alert["alert_id"], camera_id, current_severity,
+            )
+        except Exception as exc:
+            logger.error("[%s] Auto-alert creation error: %s", camera_id, exc)
+
 
 async def _camera_loop(camera_id: str) -> None:
     """Mock-pipeline background task for one camera."""
@@ -46,6 +121,7 @@ async def _camera_loop(camera_id: str) -> None:
                 latest_detections[camera_id] = result
                 logger.debug("[%s] count=%d severity=%s",
                              camera_id, result["vehicle_count"], result["severity"])
+                await _process_detection(camera_id, result)
             except StopIteration:
                 logger.info("[%s] Mock generator exhausted.", camera_id)
                 break
@@ -82,6 +158,7 @@ async def _hls_camera_loop(camera_id: str, source: str) -> None:
                     latest_detections[camera_id] = result
                     logger.debug("[%s] count=%d severity=%s",
                                  camera_id, result["vehicle_count"], result["severity"])
+                    await _process_detection(camera_id, result)
                 except StopIteration:
                     logger.info("[%s] HLS generator exhausted.", camera_id)
                     return              # pipeline fell back to mock; let it run to end
@@ -129,6 +206,7 @@ async def _real_camera_loop(camera_id: str, source: str) -> None:
                 latest_detections[camera_id] = result
                 logger.debug("[%s] count=%d severity=%s",
                              camera_id, result["vehicle_count"], result["severity"])
+                await _process_detection(camera_id, result)
             except StopIteration:
                 logger.warning("[%s] Real stream ended — falling back to mock.", camera_id)
                 break
@@ -297,6 +375,66 @@ async def api_traffic_camera(camera_id: str):
     return result
 
 
+@app.get("/api/summary/{camera_id}", response_class=JSONResponse)
+async def api_summary(camera_id: str):
+    """Return the Claude-generated traffic summary for a specific camera.
+
+    Checks the in-memory cache first for an instant response.  If no cached
+    summary exists, generates one on demand from the latest detection data.
+    Returns 404 if the camera has no detection data at all.
+    """
+    # Try cache first for instant response.
+    cached = summary_service.get_cached_summary(camera_id)
+    if cached:
+        return {
+            "camera_id":     cached.camera_id,
+            "summary":       cached.summary,
+            "severity":      cached.severity,
+            "vehicle_count": cached.vehicle_count,
+            "timestamp":     cached.timestamp,
+            "source":        cached.source,
+        }
+
+    # No cache — generate on demand from current detection data.
+    detection = latest_detections.get(camera_id)
+    if detection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Camera '{camera_id}' not found or has no detection data yet.",
+        )
+
+    result = await summary_service.generate_summary(detection)
+    return {
+        "camera_id":     result.camera_id,
+        "summary":       result.summary,
+        "severity":      result.severity,
+        "vehicle_count": result.vehicle_count,
+        "timestamp":     result.timestamp,
+        "source":        result.source,
+    }
+
+
+@app.get("/api/summaries", response_class=JSONResponse)
+async def api_summaries_all():
+    """Return cached Claude summaries for all cameras that have one.
+
+    Useful for the dashboard to fetch all summaries in a single call
+    rather than polling each camera individually.
+    """
+    summaries = {}
+    for camera_id in latest_detections:
+        cached = summary_service.get_cached_summary(camera_id)
+        if cached:
+            summaries[camera_id] = {
+                "summary":       cached.summary,
+                "severity":      cached.severity,
+                "vehicle_count": cached.vehicle_count,
+                "timestamp":     cached.timestamp,
+                "source":        cached.source,
+            }
+    return summaries
+
+
 @app.get("/api/status", response_class=JSONResponse)
 async def api_status():
     """Return a high-level system status summary."""
@@ -319,7 +457,8 @@ async def api_status():
 async def api_alerts_trigger(body: AlertTriggerRequest):
     """
     Manually trigger an alert for a camera.
-    Looks up the current detection state for *camera_id* and appends a new
+    Looks up the current detection state for *camera_id*, generates a
+    Claude API summary (with template fallback), and appends a new
     entry to *alert_log*.  Returns 404 if the camera has no data yet.
     """
     detection = latest_detections.get(body.camera_id)
@@ -329,6 +468,9 @@ async def api_alerts_trigger(body: AlertTriggerRequest):
             detail=f"Camera '{body.camera_id}' has no detection data yet.",
         )
 
+    # Generate a Claude summary for the alert (falls back to template).
+    ai_summary = await summary_service.generate_alert_description(detection)
+
     alert = {
         "alert_id":      str(uuid.uuid4()),
         "camera_id":     body.camera_id,
@@ -336,7 +478,9 @@ async def api_alerts_trigger(body: AlertTriggerRequest):
         "vehicle_count": detection["vehicle_count"],
         "color":         detection["color"],
         "timestamp":     datetime.now(timezone.utc).isoformat(),
-        "message":       body.message or f"Alert triggered for {body.camera_id}",
+        "message":       body.message or ai_summary.summary,
+        "summary":       ai_summary.summary,
+        "source":        ai_summary.source,
     }
     alert_log.append(alert)
     logger.info("Alert created: %s  camera=%s severity=%s", alert["alert_id"], alert["camera_id"], alert["severity"])

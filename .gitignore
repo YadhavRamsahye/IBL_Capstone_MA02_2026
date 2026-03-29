@@ -1,0 +1,14 @@
+# Environment secrets — NEVER commit these
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# YOLO model weights (large binary)
+*.pt
+
+# IDE
+.vscode/
+.idea/

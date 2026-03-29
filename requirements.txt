@@ -18,3 +18,5 @@ selenium
 webdriver-manager
 numpy
 imageio-ffmpeg
+anthropic
+python-dotenv
