@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Map - AI Bottleneck Detection</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        
+        .navbar {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 0 24px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+            z-index: 1000;
+        }
+
+        .navbar-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .nav-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, #e94560, #0f3460);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .navbar-brand h1 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #e6edf3;
+        }
+
+        .navbar-brand span {
+            color: #e94560;
+        }
+
+        .navbar-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(35, 197, 94, 0.1);
+            border: 1px solid rgba(35, 197, 94, 0.3);
+            color: #23c55e;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            background: #23c55e;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .user-info {
+            color: rgba(230, 237, 243, 0.6);
+            font-size: 13px;
+        }
+
+        .user-info strong {
+            color: #e6edf3;
+        }
+
+        .logout-btn {
+            background: rgba(233, 69, 96, 0.1);
+            border: 1px solid rgba(233, 69, 96, 0.3);
+            color: #e94560;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+
+        .logout-btn:hover {
+            background: rgba(233, 69, 96, 0.2);
+        }
+
+        
+        .main-layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        
+        .sidebar {
+            width: 280px;
+            background: #161b22;
+            border-right: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            overflow-y: auto;
+        }
+
+        .sidebar-section {
+            padding: 16px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .sidebar-section h3 {
+            font-size: 11px;
+            font-weight: 600;
+            color: rgba(230, 237, 243, 0.4);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 12px;
+        }
+
+        
+        .control-btn {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 9px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            color: #e6edf3;
+            font-size: 13px;
+            cursor: pointer;
+            margin-bottom: 8px;
+            transition: background 0.2s, border-color 0.2s;
+            text-align: left;
+        }
+
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: #58a6ff;
+        }
+
+        .control-btn.active {
+            background: rgba(88, 166, 255, 0.1);
+            border-color: #58a6ff;
+            color: #58a6ff;
+        }
+
+        .control-btn .btn-icon {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: rgba(230, 237, 243, 0.7);
+        }
+
+        .legend-color {
+            width: 28px;
+            height: 8px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        .stat-card .stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: #58a6ff;
+            line-height: 1;
+        }
+
+        .stat-card .stat-label {
+            font-size: 11px;
+            color: rgba(230, 237, 243, 0.4);
+            margin-top: 4px;
+            line-height: 1.3;
+        }
+
+        .stat-card.warning .stat-value { color: #f0883e; }
+        .stat-card.danger  .stat-value { color: #e94560; }
+        .stat-card.success .stat-value { color: #23c55e; }
+
+        
+        .location-list {
+            list-style: none;
+        }
+
+        .location-list li {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 0;
+            font-size: 12px;
+            color: rgba(230, 237, 243, 0.6);
+            border-bottom: 1px solid #21262d;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+
+        .location-list li:last-child { border-bottom: none; }
+        .location-list li:hover { color: #58a6ff; }
+
+        .location-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+       
+        .map-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        
+        .map-info-bar {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(22, 27, 34, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 8px 18px;
+            font-size: 13px;
+            color: rgba(230, 237, 243, 0.7);
+            z-index: 500;
+            white-space: nowrap;
+        }
+
+        .map-info-bar strong {
+            color: #58a6ff;
+        }
+        
+        .bell-wrapper {
+            position: relative;
+            cursor: pointer;
+        }
+
+        .bell-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 18px;
+            cursor: pointer;
+            color: #e6edf3;
+            transition: background 0.2s;
+        }
+        .bell-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+         .bell-btn.has-alerts {
+            animation: bellShake 1s ease infinite;
+        }
+        @keyframes bellShake {
+            0%, 100% { transform: rotate(0deg); }
+            20%       { transform: rotate(15deg); }
+            40%       { transform: rotate(-15deg); }
+            60%       { transform: rotate(10deg); }
+            80%       { transform: rotate(-10deg); }
+        }
+        .bell-badge {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: #e94560;
+            color: white;
+            font-size: 10px;
+            font-weight: 700;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .alert-dropdown {
+            display: none;
+            position: absolute;
+            top: 42px;
+            right: 0;
+            width: 300px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            z-index: 2000;
+            overflow: hidden;
+        }
+        .alert-dropdown.open {
+            display: block;
+        }
+        .alert-dropdown-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #21262d;
+            font-size: 13px;
+            font-weight: 600;
+            color: #e6edf3;
+        }
+        .alert-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px 16px;
+            border-bottom: 1px solid #21262d;
+            cursor: pointer;
+            transition: background 0.15s;
+        }  
+        .alert-item:last-child {
+            border-bottom: none;
+        }
+        .alert-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+         .alert-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            margin-top: 3px;
+        }
+        .alert-text .alert-location {
+            font-size: 13px;
+            font-weight: 600;
+            color: #e6edf3;
+        }
+         .alert-text .alert-msg {
+            font-size: 12px;
+            color: rgba(230, 237, 243, 0.5);
+            margin-top: 2px;
+        }
+
+        .alert-text .alert-time {
+            font-size: 11px;
+            color: rgba(230, 237, 243, 0.3);
+            margin-top: 3px;
+        }
+
+
+
+
+
+
+
+    </style>
+</head>
+<body>
+
+
+<nav class="navbar">
+    <div class="navbar-brand">
+        <div class="nav-icon">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <circle cx="10" cy="10" r="7" fill="rgba(255,255,255,0.15)"/>
+                <circle cx="10" cy="10" r="2" fill="white"/>
+                <path d="M6 10h2M12 10h2M10 6v2M10 12v2" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+        </div>
+        <h1>AI Traffic Bottleneck Detection &mdash; <span>Mauritius</span></h1>
+    </div>
+    <div class="navbar-right">
+        <div class="status-badge">
+            <div class="status-dot"></div>
+            System Online
+        </div>
+        <div class="user-info">Logged in as <strong>{{ user }}</strong></div>
+        <a href="/logout" class="logout-btn">Sign Out</a>
+         
+        <div class="bell-wrapper" id="bellWrapper">
+            <button class="bell-btn has-alerts" onclick="toggleAlerts()">🔔</button>
+            <div class="bell-badge" id="bellBadge">2</div>
+            <div class="alert-dropdown" id="alertDropdown">
+                <div class="alert-dropdown-header">🔴 Active Traffic Alerts</div>
+                <div class="alert-item" onclick="flyTo(-20.1609, 57.4977, 13)">
+                    <div class="alert-dot" style="background:#e94560;"></div>
+                    <div class="alert-text">
+                        <div class="alert-location">Port Louis</div>
+                        <div class="alert-msg">Bottleneck detected on main route</div>
+                        <div class="alert-time">2 mins ago</div>
+                    </div>
+                </div>
+                <div class="alert-item" onclick="flyTo(-20.0592, 57.5544, 13)">
+                    <div class="alert-dot" style="background:#e94560;"></div>
+                    <div class="alert-text">
+                        <div class="alert-location">Grand Baie</div>
+                        <div class="alert-msg">Bottleneck detected on coastal road</div>
+                        <div class="alert-time">5 mins ago</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</nav>
+        
+
+
+<div class="main-layout">
+
+    
+    <aside class="sidebar">
+
+        <div class="sidebar-section">
+            <h3>Map Controls</h3>
+            <button class="control-btn active" onclick="setLayer('streets')">
+                <span class="btn-icon">🗺</span> Street Map
+            </button>
+            <button class="control-btn" onclick="setLayer('satellite')">
+                <span class="btn-icon">🛰</span> Satellite View
+            </button>
+            <button class="control-btn" onclick="resetView()">
+                <span class="btn-icon">🎯</span> Reset to Mauritius
+            </button>
+           
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Traffic Legend</h3>
+            <div class="legend-item">
+                <div class="legend-color" style="background:#23c55e;"></div>
+                Free flow
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background:#f0883e;"></div>
+                Moderate congestion
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background:#e94560;"></div>
+                Heavy congestion
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background:#8b31c7;"></div>
+                Bottleneck detected
+            </div>
+        </div>
+
+    
+
+
+        <div class="sidebar-section">
+            <h3>Dashboard Overview</h3>
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="statCameras">--</div>
+                    <div class="stat-label">Active Cameras</div>
+                </div>
+                <div class="stat-card danger">
+                    <div class="stat-value" id="statBottlenecks">--</div>
+                    <div class="stat-label">Bottlenecks</div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="stat-value" id="statVehicles">--</div>
+                    <div class="stat-label">Vehicles Detected</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-value" id="statSystem">--</div>
+                    <div class="stat-label">System</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Key Locations</h3>
+            <ul class="location-list">
+                <li onclick="flyTo(-20.1609, 57.4977, 13)">
+                    <div class="location-dot" style="background:#e94560;"></div>
+                    Port Louis (Capital)
+                </li>
+                <li onclick="flyTo(-20.2648, 57.4793, 13)">
+                    <div class="location-dot" style="background:#f0883e;"></div>
+                    Quatre Bornes
+                </li>
+                <li onclick="flyTo(-20.2981, 57.4838, 13)">
+                    <div class="location-dot" style="background:#f0883e;"></div>
+                    Rose Hill
+                </li>
+                <li onclick="flyTo(-20.3226, 57.5036, 13)">
+                    <div class="location-dot" style="background:#23c55e;"></div>
+                    Curepipe
+                </li>
+                <li onclick="flyTo(-20.1928, 57.5913, 13)">
+                    <div class="location-dot" style="background:#23c55e;"></div>
+                    Mahebourg
+                </li>
+                <li onclick="flyTo(-20.0592, 57.5544, 13)">
+                    <div class="location-dot" style="background:#8b31c7;"></div>
+                    Grand Baie
+                </li>
+            </ul>
+        </div>
+
+    </aside>
+
+    
+    <div class="map-wrapper">
+        <div class="map-info-bar">
+            Viewing: <strong>Mauritius Road Network</strong> &nbsp;|&nbsp;
+            AI detection module: <strong style="color:#f0883e;">Pending Integration</strong>
+        </div>
+        <div id="map"></div>
+    </div>
+
+</div>
+
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script>
+    
+    const MAURITIUS_CENTER = [-20.2, 57.55];
+    const DEFAULT_ZOOM = 11;
+
+    const streetTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    });
+
+    const satelliteTile = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: '&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS'
+    });
+
+    const map = L.map('map', {
+        center: MAURITIUS_CENTER,
+        zoom: DEFAULT_ZOOM,
+        layers: [streetTile],
+        zoomControl: true
+    });
+
+    let currentLayer = 'streets';
+
+    function setLayer(type) {
+        document.querySelectorAll('.control-btn').forEach(b => b.classList.remove('active'));
+        event.currentTarget.classList.add('active');
+
+        if (type === 'streets' && currentLayer !== 'streets') {
+            map.removeLayer(satelliteTile);
+            map.addLayer(streetTile);
+            currentLayer = 'streets';
+        } else if (type === 'satellite' && currentLayer !== 'satellite') {
+            map.removeLayer(streetTile);
+            map.addLayer(satelliteTile);
+            currentLayer = 'satellite';
+        }
+    }
+
+    function resetView() {
+        map.setView(MAURITIUS_CENTER, DEFAULT_ZOOM);
+    }
+
+    function flyTo(lat, lng, zoom) {
+        map.flyTo([lat, lng], zoom, { duration: 1.2 });
+    }
+
+    
+    const locations = [
+        { coords: [-20.1609, 57.4977], name: "Port Louis", color: "#e94560",   status: "Bottleneck detected" },
+        { coords: [-20.2648, 57.4793], name: "Quatre Bornes", color: "#f0883e", status: "Moderate congestion" },
+        { coords: [-20.2981, 57.4838], name: "Rose Hill",    color: "#f0883e", status: "Moderate congestion" },
+        { coords: [-20.3226, 57.5036], name: "Curepipe",     color: "#23c55e", status: "Free flow"           },
+        { coords: [-20.1928, 57.5913], name: "Mahebourg",    color: "#23c55e", status: "Free flow"           },
+        { coords: [-20.0592, 57.5544], name: "Grand Baie",   color: "#8b31c7", status: "Bottleneck detected" },
+    ];
+
+    locations.forEach(loc => {
+        const icon = L.divIcon({
+            className: '',
+            html: `<div style="
+                width:14px; height:14px;
+                background:${loc.color};
+                border:2px solid white;
+                border-radius:50%;
+                box-shadow: 0 0 8px ${loc.color};
+            "></div>`,
+            iconSize: [14, 14],
+            iconAnchor: [7, 7]
+        });
+
+         L.marker(loc.coords, { icon })
+            .addTo(map)
+            .bindPopup(`
+                <strong>${loc.name}</strong><br>
+                <span style="color:${loc.color};">${loc.status}</span><br>
+                <small style="color:#888;">AI analysis: pending backend</small>
+            `);
+    });
+
+      
+    const heatData = [
+     
+    [-20.1609, 57.4977, 1.0],
+    [-20.1650, 57.4950, 0.9],
+    [-20.1580, 57.5010, 0.85],
+
+    
+    [-20.2648, 57.4793, 0.6],
+    [-20.2700, 57.4820, 0.55],
+
+    
+    [-20.2981, 57.4838, 0.6],
+    [-20.3010, 57.4800, 0.5],
+
+    
+    [-20.3226, 57.5036, 0.2],
+    [-20.3250, 57.5060, 0.15],
+
+    
+    [-20.1928, 57.5913, 0.2],
+
+    
+    [-20.0592, 57.5544, 1.0],
+    [-20.0620, 57.5510, 0.9],
+];
+
+const heatLayer = L.heatLayer(heatData, {
+    radius: 35,
+    blur: 25,
+    maxZoom: 13,
+    gradient: {
+        0.2: '#3b82f6',   
+        0.5: '#eab308',   
+        0.75: '#ef4444',  
+        1.0: '#9333ea'    
+    }
+}); 
+
+heatLayer.addTo(map);
+let heatmapVisible = true;
+document.getElementById('heatmapBtn').classList.add('active');
+
+function toggleHeatmap(btn) {
+    if (heatmapVisible) {
+        map.removeLayer(heatLayer);
+        btn.classList.remove('active');
+        heatmapVisible = false;
+    } else {
+        heatLayer.addTo(map);
+        btn.classList.add('active');
+        heatmapVisible = true;
+    }
+}
+ 
+function toggleAlerts() {
+    const dropdown = document.getElementById('alertDropdown');
+     dropdown.classList.toggle('open');
+}
+
+ document.addEventListener('click', function(e) {
+    const wrapper = document.getElementById('bellWrapper');
+    if (!wrapper.contains(e.target)) {
+        document.getElementById('alertDropdown').classList.remove('open');
+    }
+});
+
+// ── COPIED DIRECTLY FROM test_dashboard.html ─────────────────
+// Same poll logic, same API calls, same timing = always in sync
+
+const API_BASE  = 'http://localhost:8000';
+const POLL_MS   = 3000;  // same as test_dashboard
+
+// Camera coordinates for the map markers
+const CAMERA_COORDS = {
+    'caudan_north': [-20.1609, 57.4977],
+    'caudan_south': [-20.1625, 57.4985],
+    'la_chaussee':  [-20.1637, 57.4960],
+    'casernes':     [-20.1598, 57.4971],
+    'port_louis':   [-20.1609, 57.4977],
+    'grand_baie':   [-20.0592, 57.5544],
+};
+
+// ── Copied from test_dashboard ────────────────────────────────
+const SEVERITY_COLORS = {
+    free:       '#23c55e',
+    moderate:   '#f0883e',
+    heavy:      '#e94560',
+    bottleneck: '#8b31c7',
+};
+function severityColor(sev) { return SEVERITY_COLORS[sev] ?? '#5a7a9a'; }
+
+let activeCameraIds = ['caudan_north', 'caudan_south', 'la_chaussee', 'casernes'];
+let knownAlertIds   = new Set();
+
+// ── updateStatus — copied from test_dashboard, targets map stat cards ──
+function updateStatus(data) {
+    const camEl = document.getElementById('statCameras');
+    const botEl = document.getElementById('statBottlenecks');
+    const vehEl = document.getElementById('statVehicles');
+    const sysEl = document.getElementById('statSystem');
+    if (camEl) camEl.textContent = data.active_cameras   ?? '--';
+    if (botEl) botEl.textContent = data.bottlenecks      ?? '--';
+    if (vehEl) vehEl.textContent = data.total_detections ?? '--';
+    if (sysEl) sysEl.textContent = data.system           ?? '--';
+}
+
+// ── updateCamera — copied from test_dashboard, also updates map markers ──
+function updateCamera(data) {
+    const id  = data.camera_id;
+    const sev = data.severity ?? 'free';
+    const col = data.color ?? severityColor(sev);
+
+    // Update map marker colour and popup — map-specific addition
+    if (window._cameraMarkers) {
+        const found = window._cameraMarkers.find(m => m.camera_id === id);
+        if (found) {
+            found.marker.setIcon(L.divIcon({
+                className: '',
+                html: `<div style="width:14px;height:14px;background:${col};border:2px solid white;border-radius:50%;box-shadow:0 0 8px ${col};"></div>`,
+                iconSize: [14, 14], iconAnchor: [7, 7],
+            }));
+            found.marker.setPopupContent(`
+                <strong>${id}</strong><br>
+                <span style="color:${col};">${sev.toUpperCase()}</span><br>
+                <small>Vehicles: ${data.vehicle_count}</small><br>
+                <small>FPS: ${data.fps_processed != null ? data.fps_processed.toFixed(1) : '--'}</small><br>
+                <small style="color:#888;">Updated: ${new Date(data.timestamp).toLocaleTimeString()}</small>
+            `);
+        }
+    }
+}
+
+// ── updateAlerts — copied from test_dashboard, targets map bell dropdown ──
+function updateAlerts(alerts) {
+    const badge    = document.getElementById('bellBadge');
+    const dropdown = document.getElementById('alertDropdown');
+    const header   = dropdown.querySelector('.alert-dropdown-header');
+
+    badge.textContent   = alerts.length;
+    badge.style.display = alerts.length ? 'flex' : 'none';
+    header.textContent  = alerts.length ? '🔴 Active Traffic Alerts' : '✅ No active alerts';
+
+    alerts.forEach(a => {
+        if (knownAlertIds.has(a.alert_id)) return;
+        knownAlertIds.add(a.alert_id);
+
+        const coords = CAMERA_COORDS[a.camera_id];
+        const col    = a.color ?? severityColor(a.severity);
+        const ts     = a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '';
+
+        const item = document.createElement('div');
+        item.className = 'alert-item';
+        if (coords) item.onclick = () => flyTo(coords[0], coords[1], 13);
+        item.innerHTML = `
+            <div class="alert-dot" style="background:${col};"></div>
+            <div class="alert-text">
+                <div class="alert-location">${a.camera_id}</div>
+                <div class="alert-msg">${a.message ?? ''}</div>
+                <div class="alert-time">${ts}</div>
+            </div>`;
+        dropdown.insertBefore(item, dropdown.querySelector('.alert-item'));
+    });
+}
+
+// ── updateCameraMarkers — places markers on first load ────────
+function updateCameraMarkers(cameras) {
+    if (window._cameraMarkers) {
+        window._cameraMarkers.forEach(({ marker }) => map.removeLayer(marker));
+    }
+    window._cameraMarkers = [];
+    const heatPoints = [];
+
+    cameras.forEach(cam => {
+        const coords = CAMERA_COORDS[cam.camera_id];
+        if (!coords) return;
+        const col = severityColor(cam.current_severity);
+
+        const icon = L.divIcon({
+            className: '',
+            html: `<div style="width:14px;height:14px;background:${col};border:2px solid white;border-radius:50%;box-shadow:0 0 8px ${col};"></div>`,
+            iconSize: [14, 14], iconAnchor: [7, 7],
+        });
+
+        const marker = L.marker(coords, { icon }).addTo(map).bindPopup(`
+            <strong>${cam.name}</strong><br>
+            <span style="color:${col};">${cam.current_severity ?? 'No data'}</span><br>
+            <small>Vehicles: ${cam.current_count ?? 0}</small>
+        `);
+
+        window._cameraMarkers.push({ marker, camera_id: cam.camera_id });
+        heatPoints.push([coords[0], coords[1], Math.min((cam.current_count ?? 0) / 30, 1.0)]);
+    });
+
+    if (window._liveHeatLayer) map.removeLayer(window._liveHeatLayer);
+    window._liveHeatLayer = L.heatLayer(heatPoints, {
+        radius: 35, blur: 25, maxZoom: 13,
+        gradient: { 0.2: '#3b82f6', 0.5: '#eab308', 0.75: '#ef4444', 1.0: '#9333ea' }
+    }).addTo(map);
+}
+
+// ── poll — EXACT copy from test_dashboard ─────────────────────
+async function poll() {
+    const [trafficRes, statusRes, alertsRes, camerasRes] = await Promise.all([
+        fetch(`${API_BASE}/api/traffic`).then(r => ({ ok: r.ok, status: r.status, data: r.json() })).catch(() => null),
+        fetch(`${API_BASE}/api/status`).then(r  => ({ ok: r.ok, status: r.status, data: r.json() })).catch(() => null),
+        fetch(`${API_BASE}/api/alerts?limit=10`).then(r => ({ ok: r.ok, status: r.status, data: r.json() })).catch(() => null),
+        fetch(`${API_BASE}/api/cameras`).then(r => ({ ok: r.ok, status: r.status, data: r.json() })).catch(() => null),
+    ]);
+
+    // /api/traffic → update map marker colours + popups
+    if (trafficRes && trafficRes.ok) {
+        const data = await trafficRes.data;
+        activeCameraIds = Object.keys(data);
+        for (const cam of Object.values(data)) updateCamera(cam);
+    }
+
+    // /api/status → update sidebar stat cards
+    if (statusRes && statusRes.ok) {
+        updateStatus(await statusRes.data);
+    }
+
+    // /api/alerts → update bell badge + dropdown
+    if (alertsRes && alertsRes.ok) {
+        updateAlerts(await alertsRes.data);
+    }
+
+    // /api/cameras → update map markers + heatmap
+    if (camerasRes && camerasRes.ok) {
+        updateCameraMarkers(await camerasRes.data);
+    }
+}
+
+// ── Boot — same as test_dashboard ────────────────────────────
+poll();
+setInterval(poll, POLL_MS);
+
+</script>
+</body>
+</html>
