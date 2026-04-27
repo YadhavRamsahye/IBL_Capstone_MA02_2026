@@ -26,6 +26,7 @@ from detection.pipeline import run_pipeline
 from detection.hls_pipeline import run_hls_pipeline
 from detection.trafficwatch import discover_cameras
 from detection.claude_api import summary_service
+from detection.incident_detector import IncidentDetector
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +37,9 @@ latest_detections: dict[str, dict] = {}
 
 # Populated by lifespan() after discovery; read by /api/cameras.
 _active_cameras: list[dict] = []
+
+# Shared incident detector — analyses rolling count history per camera.
+incident_detector = IncidentDetector()
 
 # Interval (seconds) between successive reads from the mock generator.
 _POLL_INTERVAL = 3.0
@@ -53,12 +57,27 @@ _last_summary_time: dict[str, float] = {}
 
 
 async def _process_detection(camera_id: str, result: dict) -> None:
-    """Post-detection hook: generate Claude summaries and auto-trigger alerts.
+    """Post-detection hook: run incident detection, generate Claude summaries,
+    and auto-trigger alerts.
 
     Called after every detection result is stored in ``latest_detections``.
-    Respects cooldown to avoid excessive API calls.
+    Incident detection runs unconditionally; Claude API respects a cooldown.
     """
     import time as _time
+
+    # ── Incident detection (no external dependencies, always runs) ────────
+    new_incidents = incident_detector.analyze(
+        camera_id     = camera_id,
+        vehicle_count = result["vehicle_count"],
+        severity      = result["severity"],
+    )
+    if new_incidents:
+        logger.info(
+            "[%s] %d new incident(s) detected: %s",
+            camera_id,
+            len(new_incidents),
+            ", ".join(i.type for i in new_incidents),
+        )
 
     now = _time.monotonic()
     prev_time = _last_summary_time.get(camera_id, 0.0)
@@ -137,15 +156,7 @@ _WATCHDOG_STALE_SECS = 30   # restart camera if no new frame for this long
 
 
 async def _hls_camera_loop(camera_id: str, source: str) -> None:
-    """
-    Background task for HLS (.m3u8) streams via ffmpeg subprocess.
-    On StopIteration or any failure the HLS pipeline itself chains into
-    mock — this coroutine just drives the generator.
-
-    Includes a watchdog (fix 4): if latest_detections[camera_id] has not
-    been updated for _WATCHDOG_STALE_SECS, the current generator is
-    discarded and a fresh one is started.
-    """
+   
     logger.info("[%s] HLS detection task started  url=%s", camera_id, source)
     try:
         while True:                     # watchdog restart loop
@@ -192,11 +203,7 @@ async def _hls_camera_loop(camera_id: str, source: str) -> None:
 
 
 async def _real_camera_loop(camera_id: str, source: str) -> None:
-    """
-    Real-pipeline background task for one camera (RTSP / HTTP stream).
-    On StopIteration or any unrecoverable stream error, automatically
-    falls back to the mock pipeline for that camera.
-    """
+
     logger.info("[%s] Real detection task started  source=%s", camera_id, source)
     try:
         gen = run_pipeline(camera_id=camera_id, source=source)
@@ -226,10 +233,7 @@ async def _real_camera_loop(camera_id: str, source: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Startup: run Traffic Watch discovery, start one background task per
-    camera (real pipeline or mock).  Shutdown: cancel all tasks cleanly.
-    """
+
     global _active_cameras
 
     # Discovery runs in a thread — it is synchronous / blocking
@@ -284,7 +288,7 @@ app = FastAPI(title="AI Traffic Bottleneck Detection - Mauritius", lifespan=life
 app.add_middleware(SessionMiddleware, secret_key="traffic-mauritius-secret-key-2026")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:8000", "null"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -455,12 +459,7 @@ async def api_status():
 
 @app.post("/api/alerts/trigger", response_class=JSONResponse, status_code=201)
 async def api_alerts_trigger(body: AlertTriggerRequest):
-    """
-    Manually trigger an alert for a camera.
-    Looks up the current detection state for *camera_id*, generates a
-    Claude API summary (with template fallback), and appends a new
-    entry to *alert_log*.  Returns 404 if the camera has no data yet.
-    """
+
     detection = latest_detections.get(body.camera_id)
     if detection is None:
         raise HTTPException(
@@ -522,6 +521,26 @@ async def api_cameras():
             "is_mock":          src == "mock",
         })
     return result
+
+
+@app.get("/api/incidents", response_class=JSONResponse)
+async def api_incidents_all(limit: int = 100):
+    """Return all incidents (resolved + active), newest first."""
+    return incident_detector.get_all_incidents(limit=limit)
+
+
+@app.get("/api/incidents/active", response_class=JSONResponse)
+async def api_incidents_active():
+    """Return all currently unresolved incidents across all cameras."""
+    return incident_detector.get_active_incidents()
+
+
+@app.get("/api/incidents/{camera_id}", response_class=JSONResponse)
+async def api_incidents_camera(camera_id: str):
+    """Return all incidents for a specific camera, newest first."""
+    if camera_id not in latest_detections:
+        raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not found.")
+    return incident_detector.get_incidents_by_camera(camera_id)
 
 
 if __name__ == "__main__":

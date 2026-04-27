@@ -1,20 +1,3 @@
-"""
-detection/hls_pipeline.py
-HLS stream pipeline for MYT Traffic Watch cameras.
-
-OpenCV cannot read .m3u8 streams on Windows without a full FFmpeg
-backend build.  This module uses subprocess + ffmpeg to pull raw
-BGR24 frames directly from the HLS feed, then passes each frame
-into YOLOv8 for vehicle detection.
-
-Public API
-----------
-    run_hls_pipeline(camera_id: str, hls_url: str) -> Generator[dict]
-
-The result dict schema is identical to detection/pipeline.py so the
-rest of the system (main.py, API endpoints) needs no changes.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -245,25 +228,7 @@ def run_hls_pipeline(
     camera_id: str,
     hls_url: str,
 ) -> Generator[dict, None, None]:
-    """
-    Pull frames from an HLS (.m3u8) stream via ffmpeg subprocess,
-    run YOLOv8 vehicle detection on each frame, and yield result dicts.
-
-    Falls back to mock_pipeline automatically after MAX_RETRIES failures,
-    or immediately if ffmpeg is not installed.
-
-    Parameters
-    ----------
-    camera_id : str
-        Identifier included in every result dict.
-    hls_url : str
-        Full HLS URL, e.g. ``https://stream.myt.mu/.../playlist.m3u8``.
-
-    Yields
-    ------
-    dict
-        Same schema as detection.pipeline.run_pipeline.
-    """
+    
     # ── Pre-flight: check ffmpeg ──────────────────────────────────────────
     if not _ffmpeg_available():
         logger.error(

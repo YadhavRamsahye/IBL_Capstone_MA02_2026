@@ -18,9 +18,11 @@ rest of the system (main.py, API endpoints) needs no changes.
 from __future__ import annotations
 
 import logging
+import statistics
 import subprocess
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Generator
 
@@ -39,13 +41,17 @@ SEVERITY_THRESHOLDS = [
     (0,  "free",       "#23c55e"),
 ]
 
-MODEL_PATH      = "yolov8n.pt"
+MODEL_PATH      = "yolov8m.pt"   # Medium model: 50.2 mAP vs 37.3 for nano
+CONF_THRESHOLD  = 0.45           # Minimum detection confidence — eliminates false positives
+IOU_THRESHOLD   = 0.45           # NMS overlap threshold — removes duplicate boxes
+IMGSZ           = 640            # Standard YOLO input size the model was trained on
+SMOOTH_WINDOW   = 5              # Rolling median over this many frames — kills outlier spikes
 TARGET_FPS      = 0.5       # one frame every 2 s — halves pipe throughput, reduces stall risk
 MAX_RETRIES     = 3
 RETRY_DELAY     = 5         # seconds between reconnect attempts
 DEFAULT_WIDTH   = 1280
 DEFAULT_HEIGHT  = 720
-FRAME_READ_TIMEOUT = 10     # seconds to wait for one complete frame before treating as stall
+FRAME_READ_TIMEOUT = 45     # seconds to wait for one complete frame — HLS segments can be slow
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -148,6 +154,10 @@ def _read_one_frame(
                 return          # pipe closed
             buf += chunk
         result_box[0] = buf
+    except ValueError:
+        # Pipe was closed by the watchdog kill() while we were mid-read.
+        # This is expected — just exit the thread cleanly.
+        pass
     finally:
         done_event.set()
 
@@ -204,23 +214,43 @@ def _detect_loop(
     camera_id: str,
     width: int,
     height: int,
+    device: str = "cpu",
 ) -> Generator[dict, None, None]:
     """
     Pull frames from *proc*, run YOLO, classify, yield result dicts.
     Returns when the pipe is exhausted or proc exits.
+
+    Accuracy stack applied here:
+      - conf=CONF_THRESHOLD  : ignore low-confidence detections
+      - iou=IOU_THRESHOLD    : stricter NMS to merge duplicate boxes
+      - imgsz=IMGSZ          : resize to model's native training resolution
+      - rolling median       : smooth count over SMOOTH_WINDOW frames
     """
-    prev_time = time.perf_counter()
+    prev_time    = time.perf_counter()
+    count_window: deque[int] = deque(maxlen=SMOOTH_WINDOW)
 
     for frame in _read_frames(proc, width, height):
-        results = model.predict(source=frame, verbose=False, stream=False)
+        results = model.predict(
+            source  = frame,
+            conf    = CONF_THRESHOLD,
+            iou     = IOU_THRESHOLD,
+            imgsz   = IMGSZ,
+            device  = device,
+            verbose = False,
+            stream  = False,
+        )
 
-        vehicle_count = 0
+        raw_count = 0
         for r in results:
             if r.boxes is None:
                 continue
             for cls_id in r.boxes.cls.tolist():
                 if int(cls_id) in VEHICLE_CLASSES:
-                    vehicle_count += 1
+                    raw_count += 1
+
+        # Rolling median smoothing — eliminates single-frame outlier spikes
+        count_window.append(raw_count)
+        vehicle_count = int(round(statistics.median(count_window)))
 
         severity, color = _classify(vehicle_count)
 
@@ -282,6 +312,12 @@ def run_hls_pipeline(
     # ── Load YOLO model ───────────────────────────────────────────────────
     logger.info("[%s] Loading YOLOv8 model from %r …", camera_id, MODEL_PATH)
     model = YOLO(MODEL_PATH)
+    try:
+        import torch
+        _device = "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        _device = "cpu"
+    logger.info("[%s] Inference device: %s", camera_id, _device)
 
     # ── Get stream dimensions ─────────────────────────────────────────────
     width, height = _get_dimensions(hls_url)
@@ -300,7 +336,7 @@ def run_hls_pipeline(
             # Reset retry counter on a successful pipe open
             attempt = 0
 
-            yield from _detect_loop(model, proc, camera_id, width, height)
+            yield from _detect_loop(model, proc, camera_id, width, height, device=_device)
 
             # _detect_loop returned → stream ended cleanly
             logger.info("[%s] HLS stream ended.", camera_id)

@@ -2,421 +2,328 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Traffic Map - AI Bottleneck Detection</title>
-    
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        *, *::before, *::after {
+            margin: 0; padding: 0; box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
         }
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
+            background: #0d1117; color: #e6edf3;
+            height: 100vh; display: flex; flex-direction: column;
             overflow: hidden;
         }
 
-        
+        /* ── Navbar ── */
         .navbar {
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-            padding: 0 24px;
-            height: 56px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-shrink: 0;
-            z-index: 1000;
+            background: #161b22; border-bottom: 1px solid #30363d;
+            padding: 0 20px; height: 56px;
+            display: flex; align-items: center; justify-content: space-between;
+            flex-shrink: 0; z-index: 1000; gap: 10px;
         }
-
-        .navbar-brand {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
+        .navbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
         .nav-icon {
-            width: 36px;
-            height: 36px;
+            width: 36px; height: 36px; flex-shrink: 0;
             background: linear-gradient(135deg, #e94560, #0f3460);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
+            border-radius: 8px; display: flex; align-items: center; justify-content: center;
         }
-
-        .navbar-brand h1 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #e6edf3;
-        }
-
-        .navbar-brand span {
-            color: #e94560;
-        }
-
-        .navbar-right {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
+        .brand-title { font-size: 16px; font-weight: 600; color: #e6edf3; white-space: nowrap; }
+        .brand-accent { color: #e94560; }
+        .title-short { display: none; }
+        .navbar-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 
         .status-badge {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            background: rgba(35, 197, 94, 0.1);
-            border: 1px solid rgba(35, 197, 94, 0.3);
-            color: #23c55e;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 500;
+            display: flex; align-items: center; gap: 6px;
+            background: rgba(35,197,94,.1); border: 1px solid rgba(35,197,94,.3);
+            color: #23c55e; padding: 4px 12px; border-radius: 20px;
+            font-size: 12px; font-weight: 500;
         }
-
         .status-dot {
-            width: 6px;
-            height: 6px;
-            background: #23c55e;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
+            width: 6px; height: 6px; background: #23c55e;
+            border-radius: 50%; animation: blink 2s infinite; flex-shrink: 0;
         }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-
-        .user-info {
-            color: rgba(230, 237, 243, 0.6);
-            font-size: 13px;
-        }
-
-        .user-info strong {
-            color: #e6edf3;
-        }
+        .user-info { color: rgba(230,237,243,.6); font-size: 13px; white-space: nowrap; }
+        .user-info strong { color: #e6edf3; }
 
         .logout-btn {
-            background: rgba(233, 69, 96, 0.1);
-            border: 1px solid rgba(233, 69, 96, 0.3);
-            color: #e94560;
-            padding: 6px 14px;
-            border-radius: 6px;
-            font-size: 13px;
-            cursor: pointer;
-            text-decoration: none;
-            transition: background 0.2s;
+            background: rgba(233,69,96,.1); border: 1px solid rgba(233,69,96,.3);
+            color: #e94560; padding: 6px 14px; border-radius: 6px; font-size: 13px;
+            cursor: pointer; text-decoration: none; transition: background .2s;
+            white-space: nowrap; touch-action: manipulation;
+        }
+        .logout-btn:hover { background: rgba(233,69,96,.2); }
+
+        /* Hamburger — hidden on desktop */
+        .hamburger-btn {
+            display: none;
+            background: rgba(255,255,255,.05); border: 1px solid #30363d;
+            border-radius: 8px; width: 40px; height: 40px;
+            align-items: center; justify-content: center;
+            cursor: pointer; color: #e6edf3; transition: background .2s, border-color .2s;
+            flex-shrink: 0; touch-action: manipulation;
+        }
+        .hamburger-btn:hover, .hamburger-btn.active {
+            background: rgba(88,166,255,.12); border-color: #58a6ff; color: #58a6ff;
         }
 
-        .logout-btn:hover {
-            background: rgba(233, 69, 96, 0.2);
+        /* Bell */
+        .bell-wrapper { position: relative; flex-shrink: 0; }
+        .bell-btn {
+            background: rgba(255,255,255,.05); border: 1px solid #30363d;
+            border-radius: 8px; padding: 6px 10px; font-size: 18px;
+            cursor: pointer; color: #e6edf3; transition: background .2s;
+            touch-action: manipulation;
         }
-
-        
-        .main-layout {
-            display: flex;
-            flex: 1;
-            overflow: hidden;
+        .bell-btn:hover { background: rgba(255,255,255,.1); }
+        .bell-btn.has-alerts { animation: bellShake 1.5s ease infinite; }
+        @keyframes bellShake {
+            0%,100%{transform:rotate(0)} 20%{transform:rotate(15deg)}
+            40%{transform:rotate(-15deg)} 60%{transform:rotate(10deg)} 80%{transform:rotate(-10deg)}
         }
+        .bell-badge {
+            position: absolute; top: -6px; right: -6px;
+            background: #e94560; color: #fff; font-size: 10px; font-weight: 700;
+            width: 18px; height: 18px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .alert-dropdown {
+            display: none; position: absolute;
+            top: 44px; right: 0; width: 310px;
+            background: #161b22; border: 1px solid #30363d;
+            border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,.5);
+            z-index: 2000; overflow: hidden;
+            max-height: calc(100vh - 80px); overflow-y: auto;
+        }
+        .alert-dropdown.open { display: block; }
+        .alert-dropdown-header {
+            padding: 12px 16px; border-bottom: 1px solid #21262d;
+            font-size: 13px; font-weight: 600; color: #e6edf3;
+            position: sticky; top: 0; background: #161b22;
+        }
+        .alert-item {
+            display: flex; align-items: flex-start; gap: 10px;
+            padding: 12px 16px; border-bottom: 1px solid #21262d;
+            cursor: pointer; transition: background .15s;
+        }
+        .alert-item:last-child { border-bottom: none; }
+        .alert-item:hover { background: rgba(255,255,255,.04); }
+        .alert-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+        .alert-text .alert-location { font-size: 13px; font-weight: 600; color: #e6edf3; }
+        .alert-text .alert-msg { font-size: 12px; color: rgba(230,237,243,.5); margin-top: 2px; }
+        .alert-text .alert-time { font-size: 11px; color: rgba(230,237,243,.3); margin-top: 3px; }
 
-        
+        /* ── Layout ── */
+        .main-layout { display: flex; flex: 1; overflow: hidden; position: relative; }
+
+        /* Backdrop (mobile drawer overlay) */
+        .sidebar-backdrop {
+            display: none; position: fixed;
+            top: 56px; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,.6);
+            backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+            z-index: 850;
+        }
+        .sidebar-backdrop.open { display: block; }
+
+        /* ── Sidebar ── */
         .sidebar {
-            width: 280px;
-            background: #161b22;
-            border-right: 1px solid #30363d;
-            display: flex;
-            flex-direction: column;
-            flex-shrink: 0;
-            overflow-y: auto;
+            width: 280px; background: #161b22; border-right: 1px solid #30363d;
+            display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto;
+            transition: transform .3s cubic-bezier(.4,0,.2,1);
         }
+        .sidebar::-webkit-scrollbar { width: 4px; }
+        .sidebar::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 
-        .sidebar-section {
-            padding: 16px;
-            border-bottom: 1px solid #21262d;
+        /* Drawer close row — only visible when drawer is active */
+        .sidebar-close-row {
+            display: none; align-items: center; justify-content: space-between;
+            padding: 14px 16px; border-bottom: 1px solid #30363d; flex-shrink: 0;
         }
+        .sc-title { font-size: 11px; font-weight: 600; color: rgba(230,237,243,.4); text-transform: uppercase; letter-spacing: .8px; }
+        .sidebar-close-btn {
+            background: rgba(255,255,255,.05); border: 1px solid #30363d;
+            border-radius: 6px; width: 32px; height: 32px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; cursor: pointer; color: #e6edf3;
+            touch-action: manipulation;
+        }
+        .sidebar-close-btn:hover { background: rgba(255,255,255,.12); }
 
+        .sidebar-section { padding: 16px; border-bottom: 1px solid #21262d; }
         .sidebar-section h3 {
-            font-size: 11px;
-            font-weight: 600;
-            color: rgba(230, 237, 243, 0.4);
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            margin-bottom: 12px;
+            font-size: 11px; font-weight: 600;
+            color: rgba(230,237,243,.4); text-transform: uppercase; letter-spacing: .8px;
+            margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;
         }
+        .section-badge {
+            background: rgba(233,69,96,.15); color: #e94560;
+            font-size: 10px; padding: 1px 6px; border-radius: 10px; font-weight: 700;
+        }
+        .section-badge.zero { background: rgba(35,197,94,.12); color: #23c55e; }
 
-        
         .control-btn {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            width: 100%;
-            padding: 9px 12px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            color: #e6edf3;
-            font-size: 13px;
-            cursor: pointer;
-            margin-bottom: 8px;
-            transition: background 0.2s, border-color 0.2s;
-            text-align: left;
+            display: flex; align-items: center; gap: 10px;
+            width: 100%; padding: 10px 12px;
+            background: rgba(255,255,255,.04); border: 1px solid #30363d;
+            border-radius: 8px; color: #e6edf3; font-size: 13px;
+            cursor: pointer; margin-bottom: 8px;
+            transition: background .2s, border-color .2s; text-align: left;
+            touch-action: manipulation;
         }
+        .control-btn:last-child { margin-bottom: 0; }
+        .control-btn:hover { background: rgba(255,255,255,.08); border-color: #58a6ff; }
+        .control-btn.active { background: rgba(88,166,255,.1); border-color: #58a6ff; color: #58a6ff; }
+        .control-btn .btn-icon { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
 
-        .control-btn:hover {
-            background: rgba(255, 255, 255, 0.08);
-            border-color: #58a6ff;
-        }
+        .legend-item { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; color: rgba(230,237,243,.7); }
+        .legend-item:last-child { margin-bottom: 0; }
+        .legend-color { width: 28px; height: 8px; border-radius: 4px; flex-shrink: 0; }
+        .legend-shape { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
 
-        .control-btn.active {
-            background: rgba(88, 166, 255, 0.1);
-            border-color: #58a6ff;
-            color: #58a6ff;
-        }
-
-        .control-btn .btn-icon {
-            width: 20px;
-            height: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-        }
-
-        
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 10px;
-            font-size: 13px;
-            color: rgba(230, 237, 243, 0.7);
-        }
-
-        .legend-color {
-            width: 28px;
-            height: 8px;
-            border-radius: 4px;
-            flex-shrink: 0;
-        }
-
-        
-        .stat-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-        }
-
-        .stat-card {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 12px;
-            text-align: center;
-        }
-
-        .stat-card .stat-value {
-            font-size: 22px;
-            font-weight: 700;
-            color: #58a6ff;
-            line-height: 1;
-        }
-
-        .stat-card .stat-label {
-            font-size: 11px;
-            color: rgba(230, 237, 243, 0.4);
-            margin-top: 4px;
-            line-height: 1.3;
-        }
-
+        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .stat-card { background: rgba(255,255,255,.04); border: 1px solid #30363d; border-radius: 8px; padding: 12px; text-align: center; }
+        .stat-card .stat-value { font-size: 22px; font-weight: 700; color: #58a6ff; line-height: 1; }
+        .stat-card .stat-label { font-size: 11px; color: rgba(230,237,243,.4); margin-top: 4px; line-height: 1.3; }
         .stat-card.warning .stat-value { color: #f0883e; }
         .stat-card.danger  .stat-value { color: #e94560; }
         .stat-card.success .stat-value { color: #23c55e; }
 
-        
-        .location-list {
-            list-style: none;
+        .camera-list { list-style: none; }
+        .camera-list li {
+            display: flex; align-items: center; gap: 8px;
+            padding: 9px 0; font-size: 12px; color: rgba(230,237,243,.6);
+            border-bottom: 1px solid #21262d; cursor: pointer;
+            transition: color .15s; touch-action: manipulation;
         }
+        .camera-list li:last-child { border-bottom: none; }
+        .camera-list li:hover { color: #58a6ff; }
+        .camera-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; transition: background .4s; }
+        .camera-info { flex: 1; min-width: 0; }
+        .camera-name { font-weight: 500; color: #c8d8e8; }
+        .camera-sev  { font-size: 10px; color: rgba(230,237,243,.4); margin-top: 1px; }
+        .camera-count { font-size: 12px; font-weight: 700; }
 
-        .location-list li {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 7px 0;
-            font-size: 12px;
-            color: rgba(230, 237, 243, 0.6);
-            border-bottom: 1px solid #21262d;
-            cursor: pointer;
-            transition: color 0.15s;
+        .incident-list { display: flex; flex-direction: column; gap: 6px; }
+        .incident-row {
+            background: rgba(255,255,255,.03); border: 1px solid #21262d;
+            border-radius: 7px; padding: 9px 10px; cursor: pointer;
+            transition: background .15s; animation: slideIn .25s ease;
+            touch-action: manipulation;
         }
+        @keyframes slideIn { from{opacity:0;transform:translateY(-5px)} to{opacity:1;transform:translateY(0)} }
+        .incident-row:hover { background: rgba(255,255,255,.06); }
+        .incident-row-top { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+        .incident-type-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .incident-cam  { font-size: 12px; font-weight: 600; color: #e6edf3; }
+        .incident-type { font-size: 10px; color: rgba(230,237,243,.4); }
+        .incident-conf { font-size: 10px; color: rgba(230,237,243,.35); }
+        .no-incidents  { font-size: 11px; color: rgba(230,237,243,.3); text-align: center; padding: 12px 0; }
 
-        .location-list li:last-child { border-bottom: none; }
-        .location-list li:hover { color: #58a6ff; }
+        /* ── Map ── */
+        .map-wrapper { flex: 1; position: relative; overflow: hidden; }
+        #map { width: 100%; height: 100%; }
 
-        .location-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-
-       
-        .map-wrapper {
-            flex: 1;
-            position: relative;
-        }
-
-        #map {
-            width: 100%;
-            height: 100%;
-        }
-
-        
         .map-info-bar {
-            position: absolute;
-            top: 12px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(22, 27, 34, 0.92);
-            backdrop-filter: blur(8px);
-            border: 1px solid #30363d;
-            border-radius: 10px;
-            padding: 8px 18px;
-            font-size: 13px;
-            color: rgba(230, 237, 243, 0.7);
-            z-index: 500;
-            white-space: nowrap;
+            position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+            background: rgba(22,27,34,.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            border: 1px solid #30363d; border-radius: 10px;
+            padding: 8px 18px; font-size: 13px; color: rgba(230,237,243,.7);
+            z-index: 500; white-space: nowrap; pointer-events: none;
+        }
+        .map-info-bar strong { color: #58a6ff; }
+        .map-info-bar .live  { color: #23c55e; }
+
+        @keyframes incidentPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
+
+        /* ── Mobile bottom stats bar ── */
+        .mobile-bar {
+            display: none; position: fixed; bottom: 0; left: 0; right: 0;
+            background: #161b22; border-top: 1px solid #30363d;
+            z-index: 800; padding: 0 12px;
+            padding-bottom: env(safe-area-inset-bottom, 0px);
+            height: calc(62px + env(safe-area-inset-bottom, 0px));
+            align-items: center; gap: 4px;
+            box-shadow: 0 -4px 20px rgba(0,0,0,.4);
+        }
+        .mobile-stat { flex: 1; text-align: center; cursor: pointer; padding: 4px 0; }
+        .mobile-stat-value { font-size: 20px; font-weight: 700; color: #58a6ff; line-height: 1; }
+        .mobile-stat-value.success { color: #23c55e; }
+        .mobile-stat-value.warning { color: #f0883e; }
+        .mobile-stat-value.danger  { color: #e94560; }
+        .mobile-stat-label { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: rgba(230,237,243,.35); margin-top: 3px; }
+        .mobile-divider { width: 1px; height: 32px; background: #30363d; flex-shrink: 0; }
+        .mobile-menu-btn {
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+            background: rgba(88,166,255,.1); border: 1px solid rgba(88,166,255,.3);
+            color: #58a6ff; border-radius: 10px; width: 58px; height: 46px; flex-shrink: 0;
+            cursor: pointer; transition: background .2s; touch-action: manipulation;
+        }
+        .mobile-menu-btn .mmb-label { font-size: 9px; text-transform: uppercase; letter-spacing: .4px; }
+        .mobile-menu-btn:hover, .mobile-menu-btn.active { background: rgba(88,166,255,.22); }
+
+        /* ══════════════════════════════════════════════════════
+           TABLET + MOBILE  <1024px  →  sidebar becomes drawer
+           ══════════════════════════════════════════════════════ */
+        @media (max-width: 1023px) {
+            .hamburger-btn { display: flex; }
+
+            .sidebar {
+                position: fixed; top: 56px; left: 0; bottom: 0; width: 280px;
+                transform: translateX(-100%); z-index: 900;
+            }
+            .sidebar.drawer-open { transform: translateX(0); }
+            .sidebar-close-row { display: flex; }
         }
 
-        .map-info-bar strong {
-            color: #58a6ff;
-        }
-        
-        .bell-wrapper {
-            position: relative;
-            cursor: pointer;
-        }
-
-        .bell-btn {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 6px 10px;
-            font-size: 18px;
-            cursor: pointer;
-            color: #e6edf3;
-            transition: background 0.2s;
-        }
-        .bell-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-         .bell-btn.has-alerts {
-            animation: bellShake 1s ease infinite;
-        }
-        @keyframes bellShake {
-            0%, 100% { transform: rotate(0deg); }
-            20%       { transform: rotate(15deg); }
-            40%       { transform: rotate(-15deg); }
-            60%       { transform: rotate(10deg); }
-            80%       { transform: rotate(-10deg); }
-        }
-        .bell-badge {
-            position: absolute;
-            top: -6px;
-            right: -6px;
-            background: #e94560;
-            color: white;
-            font-size: 10px;
-            font-weight: 700;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .alert-dropdown {
-            display: none;
-            position: absolute;
-            top: 42px;
-            right: 0;
-            width: 300px;
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-            z-index: 2000;
-            overflow: hidden;
-        }
-        .alert-dropdown.open {
-            display: block;
-        }
-        .alert-dropdown-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid #21262d;
-            font-size: 13px;
-            font-weight: 600;
-            color: #e6edf3;
-        }
-        .alert-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            padding: 12px 16px;
-            border-bottom: 1px solid #21262d;
-            cursor: pointer;
-            transition: background 0.15s;
-        }  
-        .alert-item:last-child {
-            border-bottom: none;
-        }
-        .alert-item:hover {
-            background: rgba(255, 255, 255, 0.04);
-        }
-         .alert-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            flex-shrink: 0;
-            margin-top: 3px;
-        }
-        .alert-text .alert-location {
-            font-size: 13px;
-            font-weight: 600;
-            color: #e6edf3;
-        }
-         .alert-text .alert-msg {
-            font-size: 12px;
-            color: rgba(230, 237, 243, 0.5);
-            margin-top: 2px;
+        /* ══════════════════════════════════════════════════════
+           PHONE  <640px  →  bottom bar + condensed navbar
+           ══════════════════════════════════════════════════════ */
+        @media (max-width: 639px) {
+            body { padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px)); }
+            .navbar { padding: 0 12px; gap: 8px; }
+            .title-full  { display: none; }
+            .title-short { display: inline; }
+            .user-info   { display: none; }
+            .logout-btn  { padding: 6px 10px; font-size: 12px; }
+            .status-text { display: none; }
+            .status-badge { padding: 6px 8px; }
+            .mobile-bar { display: flex; }
+            .map-info-bar {
+                left: 8px; right: 8px; transform: none;
+                font-size: 11px; padding: 6px 10px;
+                white-space: normal; text-align: center; line-height: 1.6;
+            }
+            .alert-dropdown {
+                position: fixed; top: 56px; left: 8px; right: 8px; width: auto;
+            }
         }
 
-        .alert-text .alert-time {
-            font-size: 11px;
-            color: rgba(230, 237, 243, 0.3);
-            margin-top: 3px;
+        /* ══════════════════════════════════════════════════════
+           TINY PHONE  <400px
+           ══════════════════════════════════════════════════════ */
+        @media (max-width: 399px) {
+            .nav-icon { width: 30px; height: 30px; }
+            .brand-title { font-size: 12px; }
+            .logout-btn { display: none; }
         }
-
-
-
-
-
-
-
     </style>
 </head>
 <body>
 
-
+<!-- ── NAVBAR ── -->
 <nav class="navbar">
     <div class="navbar-brand">
+        <button class="hamburger-btn" id="hamburgerBtn" onclick="toggleSidebar()" aria-label="Toggle menu">
+            <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
+                <path d="M1 1h16M1 7h16M1 13h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </button>
         <div class="nav-icon">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                 <circle cx="10" cy="10" r="7" fill="rgba(255,255,255,0.15)"/>
@@ -424,303 +331,443 @@
                 <path d="M6 10h2M12 10h2M10 6v2M10 12v2" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
         </div>
-        <h1>AI Traffic Bottleneck Detection &mdash; <span>Mauritius</span></h1>
+        <h1 class="brand-title">
+            <span class="title-full">AI Traffic Bottleneck Detection &mdash; <span class="brand-accent">Mauritius</span></span>
+            <span class="title-short">Traffic AI &mdash; <span class="brand-accent">Mauritius</span></span>
+        </h1>
     </div>
     <div class="navbar-right">
         <div class="status-badge">
             <div class="status-dot"></div>
-            System Online
+            <span class="status-text" id="systemStatus">System Online</span>
         </div>
         <div class="user-info">Logged in as <strong>{{ user }}</strong></div>
         <a href="/logout" class="logout-btn">Sign Out</a>
-         
         <div class="bell-wrapper" id="bellWrapper">
-            <button class="bell-btn has-alerts" onclick="toggleAlerts()">🔔</button>
-            <div class="bell-badge" id="bellBadge">2</div>
+            <button class="bell-btn" id="bellBtn" onclick="toggleAlerts()">🔔</button>
+            <div class="bell-badge" id="bellBadge" style="display:none;">0</div>
             <div class="alert-dropdown" id="alertDropdown">
                 <div class="alert-dropdown-header">🔴 Active Traffic Alerts</div>
-                <div class="alert-item" onclick="flyTo(-20.1609, 57.4977, 13)">
-                    <div class="alert-dot" style="background:#e94560;"></div>
-                    <div class="alert-text">
-                        <div class="alert-location">Port Louis</div>
-                        <div class="alert-msg">Bottleneck detected on main route</div>
-                        <div class="alert-time">2 mins ago</div>
-                    </div>
-                </div>
-                <div class="alert-item" onclick="flyTo(-20.0592, 57.5544, 13)">
-                    <div class="alert-dot" style="background:#e94560;"></div>
-                    <div class="alert-text">
-                        <div class="alert-location">Grand Baie</div>
-                        <div class="alert-msg">Bottleneck detected on coastal road</div>
-                        <div class="alert-time">5 mins ago</div>
-                    </div>
+                <div id="alertDropdownBody">
+                    <div style="padding:16px;color:rgba(230,237,243,.4);font-size:12px;text-align:center;">Loading…</div>
                 </div>
             </div>
         </div>
-
     </div>
 </nav>
-        
 
-
+<!-- ── MAIN ── -->
 <div class="main-layout">
 
-    
-    <aside class="sidebar">
+    <!-- Drawer backdrop -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
 
+    <aside class="sidebar" id="sidebar">
+
+        <!-- Close row (drawer mode only) -->
+        <div class="sidebar-close-row">
+            <span class="sc-title">Navigation</span>
+            <button class="sidebar-close-btn" onclick="closeSidebar()" aria-label="Close">✕</button>
+        </div>
+
+        <!-- Map Controls -->
         <div class="sidebar-section">
             <h3>Map Controls</h3>
-            <button class="control-btn active" onclick="setLayer('streets')">
+            <button class="control-btn active" id="btnStreet" onclick="setLayer('streets', this)">
                 <span class="btn-icon">🗺</span> Street Map
             </button>
-            <button class="control-btn" onclick="setLayer('satellite')">
+            <button class="control-btn" id="btnSat" onclick="setLayer('satellite', this)">
                 <span class="btn-icon">🛰</span> Satellite View
+            </button>
+            <button class="control-btn" id="heatmapBtn" onclick="toggleHeatmap(this)">
+                <span class="btn-icon">🌡</span> Heat Map
             </button>
             <button class="control-btn" onclick="resetView()">
                 <span class="btn-icon">🎯</span> Reset to Mauritius
             </button>
-           
         </div>
 
+        <!-- Legend -->
         <div class="sidebar-section">
-            <h3>Traffic Legend</h3>
-            <div class="legend-item">
-                <div class="legend-color" style="background:#23c55e;"></div>
-                Free flow
-            </div>
-            <div class="legend-item">
-                <div class="legend-color" style="background:#f0883e;"></div>
-                Moderate congestion
-            </div>
-            <div class="legend-item">
-                <div class="legend-color" style="background:#e94560;"></div>
-                Heavy congestion
-            </div>
-            <div class="legend-item">
-                <div class="legend-color" style="background:#8b31c7;"></div>
-                Bottleneck detected
-            </div>
+            <h3>Legend</h3>
+            <div class="legend-item"><div class="legend-color" style="background:#23c55e;"></div>Free flow</div>
+            <div class="legend-item"><div class="legend-color" style="background:#f0883e;"></div>Moderate congestion</div>
+            <div class="legend-item"><div class="legend-color" style="background:#e94560;"></div>Heavy congestion</div>
+            <div class="legend-item"><div class="legend-color" style="background:#8b31c7;"></div>Bottleneck</div>
+            <div class="legend-item"><div class="legend-shape">⚠️</div>Incident detected</div>
         </div>
 
-    
-
-
+        <!-- Live Stats -->
         <div class="sidebar-section">
-            <h3>Dashboard Overview</h3>
+            <h3>Live Overview</h3>
             <div class="stat-grid">
-                <div class="stat-card">
-                    <div class="stat-value">24</div>
-                    <div class="stat-label">Monitored Segments</div>
+                <div class="stat-card success">
+                    <div class="stat-value" id="stat-cameras">—</div>
+                    <div class="stat-label">Active Cameras</div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-value">3</div>
+                    <div class="stat-value" id="stat-bottlenecks">—</div>
                     <div class="stat-label">Bottlenecks</div>
                 </div>
                 <div class="stat-card warning">
-                    <div class="stat-value">7</div>
-                    <div class="stat-label">Congested</div>
+                    <div class="stat-value" id="stat-vehicles">—</div>
+                    <div class="stat-label">Total Vehicles</div>
                 </div>
-                <div class="stat-card success">
-                    <div class="stat-value">14</div>
-                    <div class="stat-label">Clear Roads</div>
+                <div class="stat-card danger">
+                    <div class="stat-value" id="stat-incidents">—</div>
+                    <div class="stat-label">Active Incidents</div>
                 </div>
             </div>
         </div>
 
+        <!-- Live Cameras -->
         <div class="sidebar-section">
-            <h3>Key Locations</h3>
-            <ul class="location-list">
-                <li onclick="flyTo(-20.1609, 57.4977, 13)">
-                    <div class="location-dot" style="background:#e94560;"></div>
-                    Port Louis (Capital)
-                </li>
-                <li onclick="flyTo(-20.2648, 57.4793, 13)">
-                    <div class="location-dot" style="background:#f0883e;"></div>
-                    Quatre Bornes
-                </li>
-                <li onclick="flyTo(-20.2981, 57.4838, 13)">
-                    <div class="location-dot" style="background:#f0883e;"></div>
-                    Rose Hill
-                </li>
-                <li onclick="flyTo(-20.3226, 57.5036, 13)">
-                    <div class="location-dot" style="background:#23c55e;"></div>
-                    Curepipe
-                </li>
-                <li onclick="flyTo(-20.1928, 57.5913, 13)">
-                    <div class="location-dot" style="background:#23c55e;"></div>
-                    Mahebourg
-                </li>
-                <li onclick="flyTo(-20.0592, 57.5544, 13)">
-                    <div class="location-dot" style="background:#8b31c7;"></div>
-                    Grand Baie
-                </li>
+            <h3>Live Cameras</h3>
+            <ul class="camera-list" id="cameraList">
+                <li style="color:rgba(230,237,243,.3);font-size:11px;">Loading cameras…</li>
             </ul>
+        </div>
+
+        <!-- Active Incidents -->
+        <div class="sidebar-section">
+            <h3>Active Incidents <span class="section-badge zero" id="incidentBadge">0</span></h3>
+            <div class="incident-list" id="incidentList">
+                <div class="no-incidents">No active incidents</div>
+            </div>
         </div>
 
     </aside>
 
-    
+    <!-- Map -->
     <div class="map-wrapper">
-        <div class="map-info-bar">
+        <div class="map-info-bar" id="infoBar">
             Viewing: <strong>Mauritius Road Network</strong> &nbsp;|&nbsp;
-            AI detection module: <strong style="color:#f0883e;">Pending Integration</strong>
+            AI Detection: <span class="live">● Live</span> &nbsp;|&nbsp;
+            Cameras: <strong id="infoActiveCams">—</strong> &nbsp;|&nbsp;
+            Vehicles: <strong id="infoVehicles">—</strong>
         </div>
         <div id="map"></div>
     </div>
 
 </div>
 
+<!-- ── MOBILE BOTTOM BAR ── -->
+<div class="mobile-bar">
+    <div class="mobile-stat" onclick="openSidebar()">
+        <div class="mobile-stat-value success" id="mStat-cameras">—</div>
+        <div class="mobile-stat-label">Cameras</div>
+    </div>
+    <div class="mobile-divider"></div>
+    <div class="mobile-stat" onclick="openSidebar()">
+        <div class="mobile-stat-value warning" id="mStat-vehicles">—</div>
+        <div class="mobile-stat-label">Vehicles</div>
+    </div>
+    <div class="mobile-divider"></div>
+    <div class="mobile-stat" onclick="openSidebar()">
+        <div class="mobile-stat-value" id="mStat-incidents">—</div>
+        <div class="mobile-stat-label">Incidents</div>
+    </div>
+    <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleSidebar()">
+        <svg width="20" height="16" viewBox="0 0 20 16" fill="none">
+            <path d="M1 1h18M1 8h18M1 15h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="mmb-label">Menu</span>
+    </button>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <script>
-    
-    const MAURITIUS_CENTER = [-20.2, 57.55];
-    const DEFAULT_ZOOM = 11;
+'use strict';
 
-    const streetTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+const API_BASE = 'http://localhost:8000';
+const POLL_MS  = 5000;
+
+const CAMERA_LOCS = {
+    caudan_north: { coords: [-20.1554, 57.4995], name: 'Caudan North',  label: 'Caudan North — Port Louis' },
+    caudan_south: { coords: [-20.1578, 57.4978], name: 'Caudan South',  label: 'Caudan South — Port Louis' },
+    la_chaussee:  { coords: [-20.1619, 57.4963], name: 'La Chaussee',   label: 'La Chaussee Street — Port Louis' },
+    casernes:     { coords: [-20.1644, 57.4948], name: 'Casernes',      label: 'Casernes / Brabant Street — Port Louis' },
+};
+
+const SEV_COLOR = {
+    free: '#23c55e', moderate: '#f0883e',
+    heavy: '#e94560', bottleneck: '#8b31c7', unknown: '#5a7a9a',
+};
+
+// ── Map init ──────────────────────────────────────────────────────────────────
+const MAURITIUS = [-20.2, 57.55];
+
+const streetTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+});
+const satTile = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 19, attribution: '&copy; Esri' }
+);
+
+const map = L.map('map', { center: MAURITIUS, zoom: 11, layers: [streetTile] });
+
+let currentLayer = 'streets', heatLayer = null, heatmapVisible = false;
+
+const cameraMarkers = {}, incidentMarkers = {};
+
+function camIcon(color) {
+    return L.divIcon({
+        className: '',
+        html: `<div style="width:16px;height:16px;background:${color};border:2.5px solid #fff;border-radius:50%;box-shadow:0 0 10px ${color},0 0 4px rgba(0,0,0,.6);"></div>`,
+        iconSize: [16,16], iconAnchor: [8,8],
     });
-
-    const satelliteTile = L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 19,
-        attribution: '&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS'
+}
+function incidentIcon(color) {
+    return L.divIcon({
+        className: '',
+        html: `<div style="font-size:22px;line-height:1;filter:drop-shadow(0 0 6px ${color});animation:incidentPulse 1.5s ease-in-out infinite;">⚠️</div>`,
+        iconSize: [28,28], iconAnchor: [14,14],
     });
+}
 
-    const map = L.map('map', {
-        center: MAURITIUS_CENTER,
-        zoom: DEFAULT_ZOOM,
-        layers: [streetTile],
-        zoomControl: true
-    });
-
-    let currentLayer = 'streets';
-
-    function setLayer(type) {
-        document.querySelectorAll('.control-btn').forEach(b => b.classList.remove('active'));
-        event.currentTarget.classList.add('active');
-
-        if (type === 'streets' && currentLayer !== 'streets') {
-            map.removeLayer(satelliteTile);
-            map.addLayer(streetTile);
-            currentLayer = 'streets';
-        } else if (type === 'satellite' && currentLayer !== 'satellite') {
-            map.removeLayer(streetTile);
-            map.addLayer(satelliteTile);
-            currentLayer = 'satellite';
-        }
-    }
-
-    function resetView() {
-        map.setView(MAURITIUS_CENTER, DEFAULT_ZOOM);
-    }
-
-    function flyTo(lat, lng, zoom) {
-        map.flyTo([lat, lng], zoom, { duration: 1.2 });
-    }
-
-    
-    const locations = [
-        { coords: [-20.1609, 57.4977], name: "Port Louis", color: "#e94560",   status: "Bottleneck detected" },
-        { coords: [-20.2648, 57.4793], name: "Quatre Bornes", color: "#f0883e", status: "Moderate congestion" },
-        { coords: [-20.2981, 57.4838], name: "Rose Hill",    color: "#f0883e", status: "Moderate congestion" },
-        { coords: [-20.3226, 57.5036], name: "Curepipe",     color: "#23c55e", status: "Free flow"           },
-        { coords: [-20.1928, 57.5913], name: "Mahebourg",    color: "#23c55e", status: "Free flow"           },
-        { coords: [-20.0592, 57.5544], name: "Grand Baie",   color: "#8b31c7", status: "Bottleneck detected" },
-    ];
-
-    locations.forEach(loc => {
-        const icon = L.divIcon({
-            className: '',
-            html: `<div style="
-                width:14px; height:14px;
-                background:${loc.color};
-                border:2px solid white;
-                border-radius:50%;
-                box-shadow: 0 0 8px ${loc.color};
-            "></div>`,
-            iconSize: [14, 14],
-            iconAnchor: [7, 7]
-        });
-
-         L.marker(loc.coords, { icon })
+(function initMarkers() {
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
             .addTo(map)
-            .bindPopup(`
-                <strong>${loc.name}</strong><br>
-                <span style="color:${loc.color};">${loc.status}</span><br>
-                <small style="color:#888;">AI analysis: pending backend</small>
-            `);
-    });
-
-      
-    const heatData = [
-     
-    [-20.1609, 57.4977, 1.0],
-    [-20.1650, 57.4950, 0.9],
-    [-20.1580, 57.5010, 0.85],
-
-    
-    [-20.2648, 57.4793, 0.6],
-    [-20.2700, 57.4820, 0.55],
-
-    
-    [-20.2981, 57.4838, 0.6],
-    [-20.3010, 57.4800, 0.5],
-
-    
-    [-20.3226, 57.5036, 0.2],
-    [-20.3250, 57.5060, 0.15],
-
-    
-    [-20.1928, 57.5913, 0.2],
-
-    
-    [-20.0592, 57.5544, 1.0],
-    [-20.0620, 57.5510, 0.9],
-];
-
-const heatLayer = L.heatLayer(heatData, {
-    radius: 35,
-    blur: 25,
-    maxZoom: 13,
-    gradient: {
-        0.2: '#3b82f6',   
-        0.5: '#eab308',   
-        0.75: '#ef4444',  
-        1.0: '#9333ea'    
+            .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
     }
-}); 
+})();
 
-heatLayer.addTo(map);
-let heatmapVisible = true;
-document.getElementById('heatmapBtn').classList.add('active');
+// ── Sidebar drawer ────────────────────────────────────────────────────────────
+function openSidebar() {
+    document.getElementById('sidebar').classList.add('drawer-open');
+    document.getElementById('sidebarBackdrop').classList.add('open');
+    document.getElementById('mobileMenuBtn').classList.add('active');
+    document.getElementById('hamburgerBtn').classList.add('active');
+}
+function closeSidebar() {
+    document.getElementById('sidebar').classList.remove('drawer-open');
+    document.getElementById('sidebarBackdrop').classList.remove('open');
+    document.getElementById('mobileMenuBtn').classList.remove('active');
+    document.getElementById('hamburgerBtn').classList.remove('active');
+}
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.contains('drawer-open') ? closeSidebar() : openSidebar();
+}
+
+window.addEventListener('resize', () => {
+    if (window.innerWidth >= 1024) closeSidebar();
+    map.invalidateSize();
+});
+
+// ── Map helpers ───────────────────────────────────────────────────────────────
+function setLayer(type, btn) {
+    if (type === currentLayer) return;
+    document.querySelectorAll('#btnStreet,#btnSat').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    if (type === 'streets') { map.removeLayer(satTile);    map.addLayer(streetTile); }
+    else                    { map.removeLayer(streetTile); map.addLayer(satTile); }
+    currentLayer = type;
+}
+
+function resetView() { map.setView(MAURITIUS, 11); }
+
+function flyTo(lat, lng, zoom) {
+    map.flyTo([lat, lng], zoom ?? 15, { duration: 1.2 });
+    if (window.innerWidth < 1024) closeSidebar();
+}
 
 function toggleHeatmap(btn) {
-    if (heatmapVisible) {
-        map.removeLayer(heatLayer);
-        btn.classList.remove('active');
-        heatmapVisible = false;
-    } else {
-        heatLayer.addTo(map);
-        btn.classList.add('active');
-        heatmapVisible = true;
-    }
+    if (!heatLayer) return;
+    if (heatmapVisible) { map.removeLayer(heatLayer); btn.classList.remove('active'); }
+    else                { heatLayer.addTo(map);        btn.classList.add('active'); }
+    heatmapVisible = !heatmapVisible;
 }
- 
+
 function toggleAlerts() {
-    const dropdown = document.getElementById('alertDropdown');
-     dropdown.classList.toggle('open');
+    document.getElementById('alertDropdown').classList.toggle('open');
+}
+document.addEventListener('click', e => {
+    if (!document.getElementById('bellWrapper').contains(e.target))
+        document.getElementById('alertDropdown').classList.remove('open');
+});
+
+// ── Live data ─────────────────────────────────────────────────────────────────
+async function fetchTraffic() {
+    try {
+        const res = await fetch(`${API_BASE}/api/traffic`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const listEl = document.getElementById('cameraList');
+        listEl.innerHTML = '';
+        let heatPoints = [], totalVehicles = 0;
+
+        for (const [id, det] of Object.entries(data)) {
+            const color = det.color ?? SEV_COLOR[det.severity] ?? SEV_COLOR.unknown;
+            const loc   = CAMERA_LOCS[id];
+
+            if (cameraMarkers[id]) {
+                cameraMarkers[id].setIcon(camIcon(color));
+                cameraMarkers[id].setPopupContent(`
+                    <div style="min-width:190px;font-family:Segoe UI,sans-serif;">
+                        <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
+                        <div style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
+                        <table style="font-size:12px;color:#555;width:100%;">
+                            <tr><td>Vehicles</td><td><b>${det.vehicle_count}</b></td></tr>
+                            <tr><td>FPS</td><td>${det.fps_processed?.toFixed(2) ?? '—'}</td></tr>
+                            <tr><td>Updated</td><td>${new Date(det.timestamp).toLocaleTimeString()}</td></tr>
+                        </table>
+                    </div>`);
+            }
+
+            if (loc) heatPoints.push([loc.coords[0], loc.coords[1], Math.min(det.vehicle_count / 35, 1.0)]);
+            totalVehicles += det.vehicle_count ?? 0;
+
+            const li = document.createElement('li');
+            li.onclick = () => loc && flyTo(loc.coords[0], loc.coords[1], 16);
+            li.innerHTML = `
+                <div class="camera-dot" style="background:${color};box-shadow:0 0 5px ${color};"></div>
+                <div class="camera-info">
+                    <div class="camera-name">${loc?.name ?? id}</div>
+                    <div class="camera-sev">${(det.severity ?? 'unknown').toUpperCase()} · ${new Date(det.timestamp).toLocaleTimeString()}</div>
+                </div>
+                <div class="camera-count" style="color:${color};">${det.vehicle_count}</div>`;
+            listEl.appendChild(li);
+        }
+
+        if (!heatLayer) {
+            heatLayer = L.heatLayer(heatPoints, {
+                radius: 40, blur: 28, maxZoom: 15,
+                gradient: { 0.25: '#3b82f6', 0.55: '#eab308', 0.80: '#ef4444', 1.0: '#9333ea' },
+            });
+        } else {
+            heatLayer.setLatLngs(heatPoints);
+        }
+
+        const camCount = Object.keys(data).length;
+        document.getElementById('infoActiveCams').textContent = camCount;
+        document.getElementById('infoVehicles').textContent   = totalVehicles;
+        setText('mStat-cameras',  camCount);
+        setText('mStat-vehicles', totalVehicles);
+    } catch (_) {}
 }
 
- document.addEventListener('click', function(e) {
-    const wrapper = document.getElementById('bellWrapper');
-    if (!wrapper.contains(e.target)) {
-        document.getElementById('alertDropdown').classList.remove('open');
-    }
-});   
+async function fetchStatus() {
+    try {
+        const res = await fetch(`${API_BASE}/api/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setText('stat-cameras',     data.active_cameras);
+        setText('stat-bottlenecks', data.bottlenecks);
+        setText('stat-vehicles',    data.total_detections);
+    } catch (_) {}
+}
 
+async function fetchIncidents() {
+    try {
+        const res       = await fetch(`${API_BASE}/api/incidents/active`);
+        if (!res.ok) return;
+        const incidents = await res.json();
+
+        const activeIds = new Set(incidents.map(i => i.incident_id));
+        for (const [iid, marker] of Object.entries(incidentMarkers)) {
+            if (!activeIds.has(iid)) { map.removeLayer(marker); delete incidentMarkers[iid]; }
+        }
+        for (const inc of incidents) {
+            if (incidentMarkers[inc.incident_id]) continue;
+            const loc = CAMERA_LOCS[inc.camera_id];
+            if (!loc) continue;
+            const offset = [loc.coords[0] + 0.0005, loc.coords[1] + 0.0008];
+            incidentMarkers[inc.incident_id] = L.marker(offset, { icon: incidentIcon(inc.color) })
+                .addTo(map)
+                .bindPopup(`
+                    <div style="min-width:230px;font-family:Segoe UI,sans-serif;">
+                        <div style="color:${inc.color};font-weight:700;font-size:13px;margin-bottom:5px;">
+                            ⚠ ${inc.type.replace(/_/g,' ').toUpperCase()}
+                        </div>
+                        <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${inc.location}</div>
+                        <div style="font-size:12px;color:#444;line-height:1.5;margin-bottom:6px;">${inc.description}</div>
+                        <table style="font-size:11px;color:#666;width:100%;">
+                            <tr><td>Severity</td><td><b style="color:${inc.color};">${inc.severity.toUpperCase()}</b></td></tr>
+                            <tr><td>Confidence</td><td>${Math.round(inc.confidence*100)}%</td></tr>
+                            <tr><td>Vehicles</td><td>${inc.vehicle_count}</td></tr>
+                            <tr><td>Time</td><td>${new Date(inc.timestamp).toLocaleTimeString()}</td></tr>
+                        </table>
+                    </div>`);
+        }
+
+        const badge  = document.getElementById('incidentBadge');
+        const listEl = document.getElementById('incidentList');
+        badge.textContent = incidents.length;
+        badge.className   = 'section-badge' + (incidents.length > 0 ? '' : ' zero');
+
+        listEl.innerHTML = incidents.length === 0
+            ? '<div class="no-incidents">No active incidents</div>'
+            : incidents.slice(0, 6).map(inc => {
+                const loc = CAMERA_LOCS[inc.camera_id];
+                const lat = loc?.coords[0] ?? -20.16, lng = loc?.coords[1] ?? 57.50;
+                return `
+                <div class="incident-row" onclick="flyTo(${lat},${lng},17)">
+                    <div class="incident-row-top">
+                        <div class="incident-type-dot" style="background:${inc.color};box-shadow:0 0 4px ${inc.color};"></div>
+                        <span class="incident-cam">${inc.location.split('—')[0].trim()}</span>
+                    </div>
+                    <div class="incident-type">${inc.type.replace(/_/g,' ')} &nbsp;·&nbsp; ${inc.vehicle_count} vehicles</div>
+                    <div class="incident-conf">${Math.round(inc.confidence*100)}% confidence &nbsp;·&nbsp; ${new Date(inc.timestamp).toLocaleTimeString()}</div>
+                </div>`;
+              }).join('');
+
+        setText('stat-incidents', incidents.length);
+        const mInc = document.getElementById('mStat-incidents');
+        if (mInc) {
+            mInc.textContent = incidents.length;
+            mInc.className   = 'mobile-stat-value ' + (incidents.length > 0 ? 'danger' : 'success');
+        }
+    } catch (_) {}
+}
+
+async function fetchAlerts() {
+    try {
+        const res    = await fetch(`${API_BASE}/api/alerts?limit=5`);
+        if (!res.ok) return;
+        const alerts = await res.json();
+
+        const badge = document.getElementById('bellBadge');
+        const btn   = document.getElementById('bellBtn');
+        const body  = document.getElementById('alertDropdownBody');
+
+        if (alerts.length > 0) {
+            badge.style.display = 'flex'; badge.textContent = alerts.length;
+            btn.classList.add('has-alerts');
+        } else {
+            badge.style.display = 'none';
+            btn.classList.remove('has-alerts');
+        }
+
+        body.innerHTML = alerts.length === 0
+            ? '<div style="padding:16px;color:rgba(230,237,243,.4);font-size:12px;text-align:center;">No active alerts</div>'
+            : alerts.map(a => {
+                const loc  = CAMERA_LOCS[a.camera_id];
+                const name = (a.camera_id ?? '').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+                const oc   = loc ? `flyTo(${loc.coords[0]},${loc.coords[1]},16);document.getElementById('alertDropdown').classList.remove('open');` : '';
+                return `
+                <div class="alert-item" onclick="${oc}">
+                    <div class="alert-dot" style="background:${a.color ?? '#e94560'};"></div>
+                    <div class="alert-text">
+                        <div class="alert-location">${name}</div>
+                        <div class="alert-msg">${a.severity?.toUpperCase()} — ${a.vehicle_count} vehicles</div>
+                        <div class="alert-time">${new Date(a.timestamp).toLocaleTimeString()}</div>
+                    </div>
+                </div>`;
+              }).join('');
+    } catch (_) {}
+}
+
+function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val ?? '—'; }
+
+async function poll() {
+    await Promise.all([ fetchTraffic(), fetchStatus(), fetchIncidents(), fetchAlerts() ]);
+}
+poll();
+setInterval(poll, POLL_MS);
 </script>
 </body>
 </html>
