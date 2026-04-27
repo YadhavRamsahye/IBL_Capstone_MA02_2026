@@ -155,12 +155,38 @@
             line-height: 1.8;
         }
 
+        .success-msg {
+            background: rgba(35, 197, 94, 0.15);
+            border: 1px solid rgba(35, 197, 94, 0.4);
+            color: #4ade80;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
         .footer-text {
             text-align: center;
             margin-top: 24px;
             color: rgba(255, 255, 255, 0.2);
             font-size: 11px;
         }
+
+        .signup-link {
+            text-align: center;
+            margin-top: 16px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .signup-link a {
+            color: #e94560;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .signup-link a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -177,6 +203,10 @@
             <h1>AI Traffic Bottleneck<br>Detection System</h1>
             <p>Mauritius Road Network Intelligence</p>
         </div>
+
+        {% if success %}
+        <div class="success-msg">{{ success }}</div>
+        {% endif %}
 
         {% if error %}
         <div class="error-msg">{{ error }}</div>
@@ -199,6 +229,7 @@
             <code>Username: admin &nbsp;|&nbsp; Password: admin123</code>
         </div>
 
+        <div class="signup-link">Don't have an account? <a href="/signup">Sign up</a></div>
         <div class="footer-text">IBL Capstone Project &mdash; MA02 2026</div>
     </div>
 </body>

@@ -43,13 +43,16 @@ logger = logging.getLogger(__name__)
 
 # ── Tunable thresholds ────────────────────────────────────────────────────────
 HISTORY_SIZE        = 10   # readings kept per camera
-SPIKE_THRESHOLD     = 10   # vehicles added in one step → sudden_congestion
-BLOCKAGE_HIGH_MIN   = 15   # previous count must be ≥ this
+SPIKE_THRESHOLD     = 6    # vehicles added in one step → sudden_congestion
+BLOCKAGE_HIGH_MIN   = 10   # previous count must be ≥ this
 BLOCKAGE_LOW_MAX    = 2    # current count must drop to ≤ this
-BOTTLENECK_STREAK   = 3    # consecutive bottleneck readings → sustained_bottleneck
+BOTTLENECK_STREAK   = 2    # consecutive bottleneck readings → sustained_bottleneck
 BUILDUP_STREAK      = 4    # consecutive rising readings → rapid_buildup
-BUILDUP_MIN_STEP    = 2    # each step must rise ≥ this many vehicles
+BUILDUP_MIN_STEP    = 1    # each step must rise ≥ this many vehicles
 FREEZE_TIMEOUT_SECS = 90   # seconds without data → camera_freeze
+NIGHT_ZERO_STREAK   = 3    # consecutive zero readings at night → night_low_visibility
+NIGHT_START_HOUR    = 18   # UTC hour — night window start (22:00 Port Louis)
+NIGHT_END_HOUR      = 6    # UTC hour — night window end (10:00 Port Louis)
 
 # ── Incident type metadata ────────────────────────────────────────────────────
 _TYPE_META: dict[str, dict] = {
@@ -58,6 +61,7 @@ _TYPE_META: dict[str, dict] = {
     "road_blockage":        {"label": "Road Blockage",         "color": "#f0883e"},
     "rapid_buildup":        {"label": "Rapid Traffic Buildup", "color": "#f0883e"},
     "camera_freeze":        {"label": "Camera Offline",        "color": "#5a7a9a"},
+    "night_low_visibility": {"label": "Night Low Visibility",  "color": "#f59e0b"},
 }
 
 _CAMERA_DISPLAY: dict[str, str] = {
@@ -130,6 +134,8 @@ class IncidentDetector:
         self._open: dict[str, dict[str, Incident]] = {}
         # flat chronological list of every incident ever raised
         self._log: list[Incident] = []
+        # camera_id → consecutive zero-count readings during night hours
+        self._night_zero_streak: dict[str, int] = {}
 
     # ── Public interface ──────────────────────────────────────────────────────
 
@@ -159,6 +165,7 @@ class IncidentDetector:
             self._check_sustained_bottleneck,
             self._check_road_blockage,
             self._check_rapid_buildup,
+            self._check_night_low_visibility,
         ):
             inc = check(camera_id, reading, hist)
             if inc:
@@ -350,6 +357,36 @@ class IncidentDetector:
             ),
         )
 
+    def _check_night_low_visibility(
+        self,
+        camera_id: str,
+        r: _Reading,
+        hist: deque[_Reading],
+    ) -> Optional[Incident]:
+        if "night_low_visibility" in self._open.get(camera_id, {}):
+            return None
+        hour = datetime.now(timezone.utc).hour
+        is_night = hour >= NIGHT_START_HOUR or hour < NIGHT_END_HOUR
+        if not is_night or r.count > 0:
+            self._night_zero_streak[camera_id] = 0
+            return None
+        streak = self._night_zero_streak.get(camera_id, 0) + 1
+        self._night_zero_streak[camera_id] = streak
+        if streak < NIGHT_ZERO_STREAK:
+            return None
+        return self._make(
+            camera_id     = camera_id,
+            itype         = "night_low_visibility",
+            iseverity     = "minor",
+            confidence    = 0.65,
+            vehicle_count = 0,
+            description   = (
+                f"No vehicles detected at {_display(camera_id)} during active night hours "
+                f"({streak} consecutive zero readings). Possible camera obstruction or "
+                f"road closure."
+            ),
+        )
+
     # ── Auto-resolution ───────────────────────────────────────────────────────
 
     def _auto_resolve(
@@ -369,6 +406,8 @@ class IncidentDetector:
                 should = r.count >= 5
             elif itype == "rapid_buildup":
                 should = r.severity in ("free", "moderate")
+            elif itype == "night_low_visibility":
+                should = r.count > 0
             if should:
                 inc.resolved    = True
                 inc.resolved_at = now.isoformat()

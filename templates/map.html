@@ -240,6 +240,10 @@
         .map-info-bar .live  { color: #23c55e; }
 
         @keyframes incidentPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
+        @keyframes incidentRingPulse {
+            0%   { transform: translate(-50%,-50%) scale(1);   opacity: 0.9; }
+            100% { transform: translate(-50%,-50%) scale(2.8); opacity: 0; }
+        }
 
         /* ── Mobile bottom stats bar ── */
         .mobile-bar {
@@ -312,6 +316,16 @@
             .brand-title { font-size: 12px; }
             .logout-btn { display: none; }
         }
+
+        /* Hidden demo button */
+        #demoBtn {
+            position: fixed; bottom: 80px; right: 16px; z-index: 2000;
+            background: rgba(139,49,199,.12); border: 1px solid rgba(139,49,199,.25);
+            color: rgba(139,49,199,.6); border-radius: 10px; padding: 7px 13px;
+            font-size: 11px; cursor: pointer; opacity: 0.2;
+            transition: opacity .25s, background .2s;
+        }
+        #demoBtn:hover { opacity: 1; background: rgba(139,49,199,.28); }
     </style>
 </head>
 <body>
@@ -342,6 +356,7 @@
             <span class="status-text" id="systemStatus">System Online</span>
         </div>
         <div class="user-info">Logged in as <strong>{{ user }}</strong></div>
+        <a href="/analytics" style="color:#58a6ff;font-size:13px;text-decoration:none;">📊 Analytics</a>
         <a href="/logout" class="logout-btn">Sign Out</a>
         <div class="bell-wrapper" id="bellWrapper">
             <button class="bell-btn" id="bellBtn" onclick="toggleAlerts()">🔔</button>
@@ -475,6 +490,8 @@
     </button>
 </div>
 
+<button id="demoBtn" onclick="triggerDemo()" title="Trigger demo bottleneck">🎬 Demo</button>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <script>
@@ -483,11 +500,12 @@
 const API_BASE = 'http://localhost:8000';
 const POLL_MS  = 5000;
 
+// Seeded with correct coordinates (Fix 3); overridden/extended by fetchCameras() at init.
 const CAMERA_LOCS = {
-    caudan_north: { coords: [-20.1554, 57.4995], name: 'Caudan North',  label: 'Caudan North — Port Louis' },
-    caudan_south: { coords: [-20.1578, 57.4978], name: 'Caudan South',  label: 'Caudan South — Port Louis' },
-    la_chaussee:  { coords: [-20.1619, 57.4963], name: 'La Chaussee',   label: 'La Chaussee Street — Port Louis' },
-    casernes:     { coords: [-20.1644, 57.4948], name: 'Casernes',      label: 'Casernes / Brabant Street — Port Louis' },
+    caudan_north: { coords: [-20.1626, 57.4939], name: 'Caudan North',  label: 'Caudan North — Port Louis' },
+    caudan_south: { coords: [-20.1640, 57.4945], name: 'Caudan South',  label: 'Caudan South — Port Louis' },
+    la_chaussee:  { coords: [-20.1608, 57.4972], name: 'La Chaussee',   label: 'La Chaussee Street — Port Louis' },
+    casernes:     { coords: [-20.1590, 57.4960], name: 'Casernes',      label: 'Casernes / Brabant Street — Port Louis' },
 };
 
 const SEV_COLOR = {
@@ -526,14 +544,43 @@ function incidentIcon(color) {
         iconSize: [28,28], iconAnchor: [14,14],
     });
 }
+function camIncidentIcon(color) {
+    return L.divIcon({
+        className: '',
+        html: `<div style="position:relative;width:28px;height:28px;">
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:16px;height:16px;background:${color};border:2.5px solid #fff;border-radius:50%;box-shadow:0 0 10px ${color};z-index:2;"></div>
+            <div style="position:absolute;top:50%;left:50%;width:20px;height:20px;border-radius:50%;border:2.5px solid #f59e0b;animation:incidentRingPulse 1.4s ease-out infinite;"></div>
+            <div style="position:absolute;top:50%;left:50%;width:20px;height:20px;border-radius:50%;border:2.5px solid #f59e0b;animation:incidentRingPulse 1.4s ease-out 0.7s infinite;"></div>
+        </div>`,
+        iconSize: [28,28], iconAnchor: [14,14],
+    });
+}
 
-(function initMarkers() {
+// Fetch /api/cameras, merge server coords into CAMERA_LOCS, create markers.
+// Falls back silently to the hardcoded coords above if the API is unavailable.
+async function fetchCameras() {
+    try {
+        const res = await fetch(`${API_BASE}/api/cameras`);
+        if (res.ok) {
+            const cameras = await res.json();
+            for (const cam of cameras) {
+                if (cam.lat == null || cam.lng == null) continue;
+                const existing = CAMERA_LOCS[cam.camera_id];
+                CAMERA_LOCS[cam.camera_id] = {
+                    coords: [cam.lat, cam.lng],
+                    name:   cam.name || existing?.name || cam.camera_id,
+                    label:  cam.name || existing?.label || cam.camera_id,
+                };
+            }
+        }
+    } catch (_) {}
     for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (cameraMarkers[id]) continue;
         cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
             .addTo(map)
             .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
     }
-})();
+}
 
 // ── Sidebar drawer ────────────────────────────────────────────────────────────
 function openSidebar() {
@@ -590,63 +637,86 @@ document.addEventListener('click', e => {
 });
 
 // ── Live data ─────────────────────────────────────────────────────────────────
+function applyTrafficData(data) {
+    const listEl = document.getElementById('cameraList');
+    listEl.innerHTML = '';
+    let heatPoints = [], totalVehicles = 0;
+
+    for (const [id, det] of Object.entries(data)) {
+        const color = det.color ?? SEV_COLOR[det.severity] ?? SEV_COLOR.unknown;
+        const loc   = CAMERA_LOCS[id];
+
+        if (cameraMarkers[id]) {
+            const isHeavy    = ['heavy', 'bottleneck'].includes(det.severity);
+            const hasIncident = det.possible_incident === true;
+            cameraMarkers[id].setIcon(hasIncident ? camIncidentIcon(color) : camIcon(color));
+            const lat = loc?.coords[0] ?? 0, lng = loc?.coords[1] ?? 0;
+            const incidentBadge = hasIncident
+                ? `<div style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#f59e0b22;border:1px solid #f59e0b66;border-radius:10px;color:#f59e0b;font-size:11px;font-weight:600;">⚠ Possible Incident</div>`
+                : '';
+            const routePanel = isHeavy ? `
+                <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
+                    <div style="font-size:11px;color:#888;margin-bottom:5px;font-weight:600;">🗺 Alternative Route</div>
+                    <input id="routeDest_${id}" type="text" placeholder="Enter destination…"
+                        style="width:100%;padding:5px 8px;font-size:12px;border:1px solid #ddd;border-radius:4px;margin-bottom:6px;box-sizing:border-box;">
+                    <button onclick="openRoute('${id}',${lat},${lng})"
+                        style="width:100%;padding:5px;background:#16a34a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">
+                        Get Alternative Route ↗
+                    </button>
+                </div>` : '';
+            cameraMarkers[id].setPopupContent(`
+                <div style="min-width:200px;font-family:Segoe UI,sans-serif;">
+                    <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
+                    <div style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
+                    ${incidentBadge}
+                    <table style="font-size:12px;color:#555;width:100%;">
+                        <tr><td>Vehicles</td><td><b>${det.vehicle_count}</b></td></tr>
+                        <tr><td>FPS</td><td>${det.fps_processed?.toFixed(2) ?? '—'}</td></tr>
+                        <tr><td>Updated</td><td>${new Date(det.timestamp).toLocaleTimeString()}</td></tr>
+                    </table>
+                    ${routePanel}
+                </div>`);
+        }
+
+        if (loc) heatPoints.push([loc.coords[0], loc.coords[1], Math.min(det.vehicle_count / 35, 1.0)]);
+        totalVehicles += det.vehicle_count ?? 0;
+
+        const li = document.createElement('li');
+        li.onclick = () => loc && flyTo(loc.coords[0], loc.coords[1], 16);
+        const incidentTag = det.possible_incident === true
+            ? `<span style="margin-left:4px;padding:1px 5px;background:#f59e0b22;border:1px solid #f59e0b55;border-radius:8px;color:#f59e0b;font-size:9px;font-weight:700;">⚠ INCIDENT</span>`
+            : '';
+        li.innerHTML = `
+            <div class="camera-dot" style="background:${color};box-shadow:0 0 5px ${color};"></div>
+            <div class="camera-info">
+                <div class="camera-name">${loc?.name ?? id}${incidentTag}</div>
+                <div class="camera-sev">${(det.severity ?? 'unknown').toUpperCase()} · ${new Date(det.timestamp).toLocaleTimeString()}</div>
+            </div>
+            <div class="camera-count" style="color:${color};">${det.vehicle_count}</div>`;
+        listEl.appendChild(li);
+    }
+
+    if (!heatLayer) {
+        heatLayer = L.heatLayer(heatPoints, {
+            radius: 40, blur: 28, maxZoom: 15,
+            gradient: { 0.25: '#3b82f6', 0.55: '#eab308', 0.80: '#ef4444', 1.0: '#9333ea' },
+        });
+    } else {
+        heatLayer.setLatLngs(heatPoints);
+    }
+
+    const camCount = Object.keys(data).length;
+    document.getElementById('infoActiveCams').textContent = camCount;
+    document.getElementById('infoVehicles').textContent   = totalVehicles;
+    setText('mStat-cameras',  camCount);
+    setText('mStat-vehicles', totalVehicles);
+}
+
 async function fetchTraffic() {
     try {
         const res = await fetch(`${API_BASE}/api/traffic`);
         if (!res.ok) return;
-        const data = await res.json();
-
-        const listEl = document.getElementById('cameraList');
-        listEl.innerHTML = '';
-        let heatPoints = [], totalVehicles = 0;
-
-        for (const [id, det] of Object.entries(data)) {
-            const color = det.color ?? SEV_COLOR[det.severity] ?? SEV_COLOR.unknown;
-            const loc   = CAMERA_LOCS[id];
-
-            if (cameraMarkers[id]) {
-                cameraMarkers[id].setIcon(camIcon(color));
-                cameraMarkers[id].setPopupContent(`
-                    <div style="min-width:190px;font-family:Segoe UI,sans-serif;">
-                        <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
-                        <div style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
-                        <table style="font-size:12px;color:#555;width:100%;">
-                            <tr><td>Vehicles</td><td><b>${det.vehicle_count}</b></td></tr>
-                            <tr><td>FPS</td><td>${det.fps_processed?.toFixed(2) ?? '—'}</td></tr>
-                            <tr><td>Updated</td><td>${new Date(det.timestamp).toLocaleTimeString()}</td></tr>
-                        </table>
-                    </div>`);
-            }
-
-            if (loc) heatPoints.push([loc.coords[0], loc.coords[1], Math.min(det.vehicle_count / 35, 1.0)]);
-            totalVehicles += det.vehicle_count ?? 0;
-
-            const li = document.createElement('li');
-            li.onclick = () => loc && flyTo(loc.coords[0], loc.coords[1], 16);
-            li.innerHTML = `
-                <div class="camera-dot" style="background:${color};box-shadow:0 0 5px ${color};"></div>
-                <div class="camera-info">
-                    <div class="camera-name">${loc?.name ?? id}</div>
-                    <div class="camera-sev">${(det.severity ?? 'unknown').toUpperCase()} · ${new Date(det.timestamp).toLocaleTimeString()}</div>
-                </div>
-                <div class="camera-count" style="color:${color};">${det.vehicle_count}</div>`;
-            listEl.appendChild(li);
-        }
-
-        if (!heatLayer) {
-            heatLayer = L.heatLayer(heatPoints, {
-                radius: 40, blur: 28, maxZoom: 15,
-                gradient: { 0.25: '#3b82f6', 0.55: '#eab308', 0.80: '#ef4444', 1.0: '#9333ea' },
-            });
-        } else {
-            heatLayer.setLatLngs(heatPoints);
-        }
-
-        const camCount = Object.keys(data).length;
-        document.getElementById('infoActiveCams').textContent = camCount;
-        document.getElementById('infoVehicles').textContent   = totalVehicles;
-        setText('mStat-cameras',  camCount);
-        setText('mStat-vehicles', totalVehicles);
+        applyTrafficData(await res.json());
     } catch (_) {}
 }
 
@@ -704,14 +774,16 @@ async function fetchIncidents() {
             : incidents.slice(0, 6).map(inc => {
                 const loc = CAMERA_LOCS[inc.camera_id];
                 const lat = loc?.coords[0] ?? -20.16, lng = loc?.coords[1] ?? 57.50;
+                const typeLabel = inc.type.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
                 return `
                 <div class="incident-row" onclick="flyTo(${lat},${lng},17)">
                     <div class="incident-row-top">
                         <div class="incident-type-dot" style="background:${inc.color};box-shadow:0 0 4px ${inc.color};"></div>
                         <span class="incident-cam">${inc.location.split('—')[0].trim()}</span>
+                        <span class="incident-conf" style="margin-left:auto;">${Math.round(inc.confidence*100)}% conf</span>
                     </div>
-                    <div class="incident-type">${inc.type.replace(/_/g,' ')} &nbsp;·&nbsp; ${inc.vehicle_count} vehicles</div>
-                    <div class="incident-conf">${Math.round(inc.confidence*100)}% confidence &nbsp;·&nbsp; ${new Date(inc.timestamp).toLocaleTimeString()}</div>
+                    <div class="incident-type">${typeLabel} &nbsp;·&nbsp; ${inc.vehicle_count} vehicles &nbsp;·&nbsp; ${timeAgo(inc.timestamp)}</div>
+                    <div style="font-size:11px;color:rgba(230,237,243,.42);margin-top:3px;line-height:1.4;">${inc.description}</div>
                 </div>`;
               }).join('');
 
@@ -763,11 +835,51 @@ async function fetchAlerts() {
 
 function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val ?? '—'; }
 
-async function poll() {
-    await Promise.all([ fetchTraffic(), fetchStatus(), fetchIncidents(), fetchAlerts() ]);
+function timeAgo(ts) {
+    const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
+    if (diff < 60)   return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
 }
-poll();
-setInterval(poll, POLL_MS);
+
+// ── Route suggestion ──────────────────────────────────────────────────────────
+function openRoute(cameraId, lat, lng) {
+    const dest = document.getElementById(`routeDest_${cameraId}`)?.value?.trim();
+    if (!dest) return;
+    window.open(
+        `https://www.google.com/maps/dir/?api=1&origin=${lat},${lng}&destination=${encodeURIComponent(dest)}&avoid=congestion`,
+        '_blank'
+    );
+}
+
+// ── Demo mode ─────────────────────────────────────────────────────────────────
+async function triggerDemo() {
+    try { await fetch(`${API_BASE}/api/demo/escalate`, { method: 'POST' }); } catch (_) {}
+}
+
+// ── WebSocket live traffic ────────────────────────────────────────────────────
+const wsUrl = `ws://${window.location.host}/ws/detections`;
+let _ws = null;
+
+function connectWS() {
+    _ws = new WebSocket(wsUrl);
+    _ws.onmessage = e => { try { applyTrafficData(JSON.parse(e.data)); } catch (_) {} };
+    _ws.onclose   = () => setTimeout(connectWS, 3000);
+    _ws.onerror   = () => _ws.close();
+}
+
+async function poll() {
+    await Promise.all([ fetchStatus(), fetchIncidents(), fetchAlerts() ]);
+}
+
+async function init() {
+    await fetchCameras();
+    fetchTraffic();     // initial HTTP fetch while WS handshakes
+    connectWS();        // live updates via WebSocket
+    poll();
+    setInterval(poll, POLL_MS);
+}
+init();
 </script>
 </body>
 </html>

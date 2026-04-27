@@ -2,17 +2,21 @@
 detection/hls_pipeline.py
 HLS stream pipeline for MYT Traffic Watch cameras.
 
-OpenCV cannot read .m3u8 streams on Windows without a full FFmpeg
-backend build.  This module uses subprocess + ffmpeg to pull raw
-BGR24 frames directly from the HLS feed, then passes each frame
-into YOLOv8 for vehicle detection.
+Strategy: reconnect-per-frame
+-------------------------------
+Instead of holding one long-lived FFmpeg pipe (which Wowza drops after a short
+time), a fresh FFmpeg subprocess is spawned for every single frame grab.  The
+process opens the HLS playlist, decodes exactly one frame, writes it to stdout,
+and exits.  The detection loop then sleeps for the frame interval and repeats.
+
+This approach is slightly slower to start each frame but avoids all connection-
+drop issues that plague persistent pipe connections to Wowza servers.
 
 Public API
 ----------
     run_hls_pipeline(camera_id: str, hls_url: str) -> Generator[dict]
 
-The result dict schema is identical to detection/pipeline.py so the
-rest of the system (main.py, API endpoints) needs no changes.
+The result dict schema is identical to detection/pipeline.py.
 """
 
 from __future__ import annotations
@@ -20,19 +24,19 @@ from __future__ import annotations
 import logging
 import statistics
 import subprocess
-import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Generator
 
+import cv2
 import numpy as np
 from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
 
-# ── Constants (mirror pipeline.py exactly) ────────────────────────────────────
-VEHICLE_CLASSES: set[int] = {2, 3, 5, 7}   # car, motorcycle, bus, truck
+# ── Constants ─────────────────────────────────────────────────────────────────
+VEHICLE_CLASSES: set[int] = {1, 2, 3, 5, 7}  # bicycle, car, motorcycle, bus, truck
 
 SEVERITY_THRESHOLDS = [
     (30, "bottleneck", "#8b31c7"),
@@ -41,17 +45,18 @@ SEVERITY_THRESHOLDS = [
     (0,  "free",       "#23c55e"),
 ]
 
-MODEL_PATH      = "yolov8m.pt"   # Medium model: 50.2 mAP vs 37.3 for nano
-CONF_THRESHOLD  = 0.45           # Minimum detection confidence — eliminates false positives
-IOU_THRESHOLD   = 0.45           # NMS overlap threshold — removes duplicate boxes
-IMGSZ           = 640            # Standard YOLO input size the model was trained on
-SMOOTH_WINDOW   = 5              # Rolling median over this many frames — kills outlier spikes
-TARGET_FPS      = 0.5       # one frame every 2 s — halves pipe throughput, reduces stall risk
-MAX_RETRIES     = 3
-RETRY_DELAY     = 5         # seconds between reconnect attempts
+MODEL_PATH      = "yolov8m.pt"
+CONF_THRESHOLD  = 0.25   # lowered for night footage (valid detections score lower)
+IOU_THRESHOLD   = 0.35   # looser NMS so queued/overlapping cars aren't merged
+IMGSZ           = 1280   # stream is 1024x576 — upscale gives more detail for small vehicles
+SMOOTH_WINDOW   = 3      # smaller window = more responsive at 0.5 fps
+FRAME_INTERVAL  = 2.0               # seconds between frame grabs (= 1 / 0.5 fps)
+SINGLE_FRAME_TIMEOUT = 20           # subprocess timeout for one frame grab (seconds)
+MAX_CONSECUTIVE_FAILURES = 5        # consecutive None grabs before raising to retry loop
+MAX_RETRIES     = 3                 # outer retry attempts before generator exhausts
+RETRY_DELAY     = 10                # seconds between outer retry attempts
 DEFAULT_WIDTH   = 1280
 DEFAULT_HEIGHT  = 720
-FRAME_READ_TIMEOUT = 45     # seconds to wait for one complete frame — HLS segments can be slow
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -72,20 +77,12 @@ def _ffmpeg_available() -> bool:
 
 
 def _get_dimensions(hls_url: str) -> tuple[int, int]:
-    """
-    Use ffprobe to read the first video stream's width/height.
-    Returns (width, height); falls back to DEFAULT_WIDTH × DEFAULT_HEIGHT.
-    """
+    """ffprobe the stream for width/height; fall back to defaults."""
     try:
         import json as _json
         result = subprocess.run(
-            [
-                "ffprobe", "-v", "quiet",
-                "-print_format", "json",
-                "-show_streams",
-                hls_url,
-            ],
-            capture_output=True, timeout=10,
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", hls_url],
+            capture_output=True, timeout=15,
         )
         if result.returncode == 0:
             data = _json.loads(result.stdout or b"{}")
@@ -93,143 +90,110 @@ def _get_dimensions(hls_url: str) -> tuple[int, int]:
                 if s.get("codec_type") == "video":
                     w = int(s.get("width",  DEFAULT_WIDTH))
                     h = int(s.get("height", DEFAULT_HEIGHT))
-                    logger.info("[hls] Stream dimensions from ffprobe: %dx%d", w, h)
+                    logger.info("[hls] Stream dimensions: %dx%d", w, h)
                     return w, h
     except Exception as exc:
         logger.warning("[hls] ffprobe dimension check failed: %s", exc)
 
-    logger.info("[hls] Defaulting to %dx%d", DEFAULT_WIDTH, DEFAULT_HEIGHT)
+    logger.info("[hls] Using default dimensions %dx%d", DEFAULT_WIDTH, DEFAULT_HEIGHT)
     return DEFAULT_WIDTH, DEFAULT_HEIGHT
 
 
-# ── FFmpeg frame reader ───────────────────────────────────────────────────────
+# ── Per-frame grab ────────────────────────────────────────────────────────────
 
-def _open_ffmpeg_pipe(hls_url: str, width: int, height: int) -> subprocess.Popen:
+def _grab_single_frame(hls_urls: list[str], width: int, height: int) -> np.ndarray | None:
     """
-    Open an ffmpeg subprocess that writes raw BGR24 frames to stdout.
-    Low-latency flags minimise buffering and reduce the chance of stalling
-    between HLS segments.
-    """
-    cmd = [
-        "ffmpeg",
-        # ── Low-latency / buffer flags (fix 5) ───────────────────────────
-        "-fflags",          "nobuffer",
-        "-flags",           "low_delay",
-        "-strict",          "experimental",
-        "-probesize",       "32",
-        "-analyzeduration", "0",
-        # ── Input ─────────────────────────────────────────────────────────
-        "-loglevel", "error",
-        "-i", hls_url,
-        # ── Output: one frame every 2 s (fix 3) ───────────────────────────
-        "-vf", f"fps={TARGET_FPS}",
-        "-f", "rawvideo",
-        "-pix_fmt", "bgr24",
-        "pipe:1",
-    ]
-    logger.debug("[hls] ffmpeg command: %s", " ".join(cmd))
-    return subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    Try each URL in *hls_urls* in order; return the first successfully decoded
+    BGR24 frame, or None if every URL fails.
 
-
-def _read_one_frame(
-    stdout,
-    frame_bytes: int,
-    result_box: list,
-    done_event: threading.Event,
-) -> None:
-    """
-    Worker thread: read exactly *frame_bytes* from *stdout* into
-    *result_box[0]*, then set *done_event*.  If the pipe closes before
-    a full frame is available, result_box[0] stays None.
-    """
-    buf = b""
-    try:
-        while len(buf) < frame_bytes:
-            chunk = stdout.read(frame_bytes - len(buf))
-            if not chunk:
-                return          # pipe closed
-            buf += chunk
-        result_box[0] = buf
-    except ValueError:
-        # Pipe was closed by the watchdog kill() while we were mid-read.
-        # This is expected — just exit the thread cleanly.
-        pass
-    finally:
-        done_event.set()
-
-
-def _read_frames(
-    proc: subprocess.Popen,
-    width: int,
-    height: int,
-) -> Generator[np.ndarray, None, None]:
-    """
-    Yield raw BGR frames from *proc*.stdout.
-
-    Each frame is read in a daemon thread.  If no complete frame arrives
-    within FRAME_READ_TIMEOUT seconds the ffmpeg process is killed and a
-    TimeoutError is raised so the outer retry loop can reconnect (fix 1).
+    A fresh subprocess is spawned per URL attempt so Wowza never sees a
+    persistent connection long enough to drop it.
     """
     frame_bytes = width * height * 3
-
-    while True:
-        result_box: list  = [None]
-        done_event        = threading.Event()
-
-        reader = threading.Thread(
-            target=_read_one_frame,
-            args=(proc.stdout, frame_bytes, result_box, done_event),
-            daemon=True,
-        )
-        reader.start()
-        signalled = done_event.wait(timeout=FRAME_READ_TIMEOUT)
-
-        if not signalled or result_box[0] is None:
-            # Stalled or pipe closed — kill ffmpeg and surface the error
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            if not signalled:
-                raise TimeoutError(
-                    f"No frame received within {FRAME_READ_TIMEOUT}s — "
-                    "HLS stream stalled between segments."
-                )
-            break   # pipe closed cleanly
-
-        raw   = result_box[0]
-        frame = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
-        yield frame
+    for hls_url in hls_urls:
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-loglevel",           "error",
+                    "-reconnect",          "1",
+                    "-reconnect_streamed", "1",
+                    "-timeout",            "30000000",   # microseconds = 30 s
+                    "-rw_timeout",         "30000000",
+                    "-i",                  hls_url,
+                    "-vframes",            "1",
+                    "-f",                  "rawvideo",
+                    "-pix_fmt",            "bgr24",
+                    "pipe:1",
+                ],
+                capture_output=True,
+                timeout=SINGLE_FRAME_TIMEOUT,
+            )
+            if result.returncode == 0 and len(result.stdout) >= frame_bytes:
+                raw = result.stdout[:frame_bytes]
+                return np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
+            err = result.stderr.decode(errors="replace")[:200].replace("\n", " ")
+            logger.debug("[hls] frame grab failed rc=%d url=%s: %s", result.returncode, hls_url, err)
+        except subprocess.TimeoutExpired:
+            logger.debug("[hls] frame grab timed out after %ds url=%s", SINGLE_FRAME_TIMEOUT, hls_url)
+        except Exception as exc:
+            logger.debug("[hls] frame grab error url=%s: %s", hls_url, exc)
+    return None
 
 
 # ── Detection loop ────────────────────────────────────────────────────────────
 
 def _detect_loop(
     model: YOLO,
-    proc: subprocess.Popen,
+    hls_urls: list[str],
     camera_id: str,
     width: int,
     height: int,
     device: str = "cpu",
 ) -> Generator[dict, None, None]:
     """
-    Pull frames from *proc*, run YOLO, classify, yield result dicts.
-    Returns when the pipe is exhausted or proc exits.
+    Repeatedly grab one frame per FRAME_INTERVAL seconds, run YOLO, yield results.
 
-    Accuracy stack applied here:
-      - conf=CONF_THRESHOLD  : ignore low-confidence detections
-      - iou=IOU_THRESHOLD    : stricter NMS to merge duplicate boxes
-      - imgsz=IMGSZ          : resize to model's native training resolution
-      - rolling median       : smooth count over SMOOTH_WINDOW frames
+    Raises RuntimeError after MAX_CONSECUTIVE_FAILURES consecutive None grabs so
+    the outer retry loop in run_hls_pipeline can reconnect / back off.
     """
-    prev_time    = time.perf_counter()
     count_window: deque[int] = deque(maxlen=SMOOTH_WINDOW)
+    prev_centers: list = []
+    consecutive_failures = 0
 
-    for frame in _read_frames(proc, width, height):
+    while True:
+        t_start = time.perf_counter()
+
+        frame = _grab_single_frame(hls_urls, width, height)
+
+        if frame is None:
+            consecutive_failures += 1
+            logger.warning(
+                "[%s] Frame grab failed (%d/%d consecutive)",
+                camera_id, consecutive_failures, MAX_CONSECUTIVE_FAILURES,
+            )
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                raise RuntimeError(
+                    f"[{camera_id}] {MAX_CONSECUTIVE_FAILURES} consecutive frame grabs "
+                    "failed — stream appears unavailable."
+                )
+            time.sleep(FRAME_INTERVAL)
+            continue
+
+        consecutive_failures = 0  # reset on any successful grab
+
+        # ── Brightness boost for dark frames (applied before CLAHE) ──────────
+        if cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean() < 80:
+            frame = cv2.convertScaleAbs(frame, alpha=1.3, beta=20)
+
+        # ── Contrast enhancement for night footage (CLAHE on L channel) ──────
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        frame = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+        # ── YOLO inference ────────────────────────────────────────────────────
         results = model.predict(
             source  = frame,
             conf    = CONF_THRESHOLD,
@@ -240,77 +204,93 @@ def _detect_loop(
             stream  = False,
         )
 
-        raw_count = 0
+        raw_count: int = 0
+        vehicle_boxes: list = []
         for r in results:
             if r.boxes is None:
                 continue
-            for cls_id in r.boxes.cls.tolist():
+            cls_list  = r.boxes.cls.tolist()
+            xyxy_list = r.boxes.xyxy.tolist()
+            for i, cls_id in enumerate(cls_list):
                 if int(cls_id) in VEHICLE_CLASSES:
                     raw_count += 1
+                    vehicle_boxes.append(xyxy_list[i])
 
-        # Rolling median smoothing — eliminates single-frame outlier spikes
+        # Rolling-median smoothing
         count_window.append(raw_count)
         vehicle_count = int(round(statistics.median(count_window)))
-
         severity, color = _classify(vehicle_count)
 
-        now = time.perf_counter()
-        fps_processed = round(1.0 / max(now - prev_time, 1e-6), 2)
-        prev_time = now
+        # ── Per-frame incident signals ─────────────────────────────────────────
+        frame_area        = width * height
+        possible_incident = any(
+            (b[2] - b[0]) * (b[3] - b[1]) > 0.25 * frame_area
+            for b in vehicle_boxes
+        )
+        current_centers = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in vehicle_boxes]
+        if not possible_incident and len(current_centers) >= 5 and prev_centers:
+            stationary = sum(
+                1 for cx, cy in current_centers
+                if any(abs(cx - px) < 10 and abs(cy - py) < 10 for px, py in prev_centers)
+            )
+            if stationary / len(current_centers) > 0.70:
+                possible_incident = True
+        prev_centers = current_centers
+
+        elapsed       = time.perf_counter() - t_start
+        fps_processed = round(1.0 / max(elapsed, 1e-6), 2)
 
         yield {
-            "camera_id":     camera_id,
-            "timestamp":     datetime.now(timezone.utc).isoformat(),
-            "vehicle_count": vehicle_count,
-            "severity":      severity,
-            "color":         color,
-            "fps_processed": fps_processed,
-            "frame_shape":   [height, width],
+            "camera_id":         camera_id,
+            "timestamp":         datetime.now(timezone.utc).isoformat(),
+            "vehicle_count":     vehicle_count,
+            "severity":          severity,
+            "color":             color,
+            "fps_processed":     fps_processed,
+            "frame_shape":       [height, width],
+            "possible_incident": possible_incident,
         }
+
+        # Sleep the remainder of the frame interval so YOLO time is included
+        remaining = FRAME_INTERVAL - (time.perf_counter() - t_start)
+        if remaining > 0:
+            time.sleep(remaining)
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def run_hls_pipeline(
     camera_id: str,
-    hls_url: str,
+    hls_urls: list[str],
 ) -> Generator[dict, None, None]:
     """
-    Pull frames from an HLS (.m3u8) stream via ffmpeg subprocess,
-    run YOLOv8 vehicle detection on each frame, and yield result dicts.
+    Grab frames one-at-a-time from HLS stream(s), run YOLOv8, yield result dicts.
 
-    Falls back to mock_pipeline automatically after MAX_RETRIES failures,
-    or immediately if ffmpeg is not installed.
+    Each frame is fetched via a fresh ffmpeg subprocess (reconnect-per-frame
+    strategy) to avoid Wowza connection-drop issues.  Multiple URLs may be
+    supplied; _grab_single_frame tries them in order on each grab attempt.
+    The generator exhausts after MAX_RETRIES consecutive detection-loop failures;
+    the caller (_hls_camera_loop in main.py) handles further retry / mock fallback.
 
     Parameters
     ----------
     camera_id : str
-        Identifier included in every result dict.
-    hls_url : str
-        Full HLS URL, e.g. ``https://stream.myt.mu/.../playlist.m3u8``.
+    hls_urls  : list[str]   One or more .m3u8 URLs tried in order per frame grab.
 
     Yields
     ------
-    dict
-        Same schema as detection.pipeline.run_pipeline.
+    dict  Same schema as detection.pipeline.run_pipeline.
     """
-    # ── Pre-flight: check ffmpeg ──────────────────────────────────────────
     if not _ffmpeg_available():
         logger.error(
-            "[%s] ffmpeg not found on PATH.\n"
-            "  Install from  https://ffmpeg.org/download.html\n"
-            "  Windows build: https://www.gyan.dev/ffmpeg/builds/\n"
-            "  After installing, restart your terminal and verify:\n"
-            "    ffmpeg -version\n"
-            "  Falling back to mock pipeline for camera '%s'.",
-            camera_id, camera_id,
+            "[%s] ffmpeg not found on PATH — cannot run HLS pipeline.\n"
+            "  Install: https://www.gyan.dev/ffmpeg/builds/\n"
+            "  Verify:  ffmpeg -version",
+            camera_id,
         )
-        from detection.mock_pipeline import run_mock_pipeline
-        yield from run_mock_pipeline(camera_id=camera_id)
-        return
+        return   # caller handles fallback
 
-    # ── Load YOLO model ───────────────────────────────────────────────────
-    logger.info("[%s] Loading YOLOv8 model from %r …", camera_id, MODEL_PATH)
+    logger.info("[%s] Loading YOLOv8 model %r …", camera_id, MODEL_PATH)
     model = YOLO(MODEL_PATH)
     try:
         import torch
@@ -319,52 +299,31 @@ def run_hls_pipeline(
         _device = "cpu"
     logger.info("[%s] Inference device: %s", camera_id, _device)
 
-    # ── Get stream dimensions ─────────────────────────────────────────────
-    width, height = _get_dimensions(hls_url)
+    width, height = _get_dimensions(hls_urls[0])
 
-    # ── Retry loop ────────────────────────────────────────────────────────
     attempt = 0
     while attempt <= MAX_RETRIES:
-        proc = None
         try:
             logger.info(
-                "[%s] Opening HLS stream (attempt %d/%d): %s",
-                camera_id, attempt + 1, MAX_RETRIES + 1, hls_url,
+                "[%s] Starting frame-grab loop (attempt %d/%d) urls=%s",
+                camera_id, attempt + 1, MAX_RETRIES + 1, hls_urls,
             )
-            proc = _open_ffmpeg_pipe(hls_url, width, height)
-
-            # Reset retry counter on a successful pipe open
-            attempt = 0
-
-            yield from _detect_loop(model, proc, camera_id, width, height, device=_device)
-
-            # _detect_loop returned → stream ended cleanly
-            logger.info("[%s] HLS stream ended.", camera_id)
-            break
+            yield from _detect_loop(model, hls_urls, camera_id, width, height, device=_device)
+            logger.info("[%s] Detection loop ended cleanly.", camera_id)
+            break   # clean exit — don't retry
 
         except Exception as exc:
-            logger.error("[%s] HLS pipeline error: %s", camera_id, exc, exc_info=True)
-
-        finally:
-            if proc is not None:
-                try:
-                    proc.stdout.close()
-                    proc.wait(timeout=3)
-                except Exception:
-                    proc.kill()
+            logger.error("[%s] Detection loop error: %s", camera_id, exc)
 
         attempt += 1
         if attempt <= MAX_RETRIES:
             logger.warning(
-                "[%s] HLS stream failed — retrying in %ds … (%d/%d)",
+                "[%s] Retrying in %ds … (%d/%d)",
                 camera_id, RETRY_DELAY, attempt, MAX_RETRIES,
             )
             time.sleep(RETRY_DELAY)
 
-    # ── After all retries exhausted, fall back to mock ────────────────────
     logger.error(
-        "[%s] HLS failed after %d attempt(s) — switching to mock pipeline.",
+        "[%s] HLS generator exhausted after %d attempt(s).",
         camera_id, MAX_RETRIES,
     )
-    from detection.mock_pipeline import run_mock_pipeline
-    yield from run_mock_pipeline(camera_id=camera_id)

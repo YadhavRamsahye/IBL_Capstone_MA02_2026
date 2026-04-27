@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Request, Form, Depends
+from fastapi import FastAPI, HTTPException, Request, Form, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -20,6 +21,9 @@ from dotenv import load_dotenv
 # Load environment variables from .env file (if present) before any
 # module tries to read ANTHROPIC_API_KEY or other secrets.
 load_dotenv()
+
+from sqlalchemy import text
+from database import DB_AVAILABLE, AsyncSessionLocal as _AsyncSession
 
 from detection.mock_pipeline import run_mock_pipeline
 from detection.pipeline import run_pipeline
@@ -55,6 +59,67 @@ _last_severity: dict[str, str] = {}
 # Track the last summary generation time per camera for cooldown.
 _last_summary_time: dict[str, float] = {}
 
+# WebSocket clients subscribed to /ws/detections.
+connected_clients: set = set()
+
+
+async def _save_snapshot(camera_id: str, result: dict) -> None:
+    """Persist a detection result to TrafficSnapshots (best-effort, non-blocking)."""
+    if not DB_AVAILABLE or _AsyncSession is None:
+        return
+    try:
+        cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
+        async with _AsyncSession() as db:
+            await db.execute(text("""
+                INSERT INTO cameras (id, name, latitude, longitude)
+                VALUES (:id, :name, :lat, :lng)
+                ON CONFLICT (id) DO NOTHING
+            """), {
+                "id":   camera_id,
+                "name": cam.get("name", camera_id),
+                "lat":  cam.get("lat"),
+                "lng":  cam.get("lng"),
+            })
+            await db.execute(text("""
+                INSERT INTO "TrafficSnapshots"
+                    (id, "CameraId", "SnapshotTime", "VehicleCount", "Severity", "fpsProcessed")
+                VALUES (:id, :camera_id, NOW(), :vehicle_count, :severity, :fps)
+            """), {
+                "id":            str(uuid.uuid4()),
+                "camera_id":     camera_id,
+                "vehicle_count": result.get("vehicle_count", 0),
+                "severity":      result.get("severity", "free"),
+                "fps":           result.get("fps_processed", 0.0),
+            })
+            await db.commit()
+    except Exception as exc:
+        logger.warning("[db] Snapshot save skipped for %s: %s", camera_id, exc)
+
+
+async def _save_bottleneck_event(camera_id: str, result: dict) -> None:
+    """Persist a heavy/bottleneck event to BottleneckEvents (best-effort)."""
+    if not DB_AVAILABLE or _AsyncSession is None:
+        return
+    try:
+        cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
+        async with _AsyncSession() as db:
+            await db.execute(text("""
+                INSERT INTO "BottleneckEvents"
+                    (id, "CameraId", "DetectedAt", "Severity", "VehicleCount", "Color", latitude, longitude)
+                VALUES (:id, :camera_id, NOW(), :severity, :vehicle_count, :color, :lat, :lng)
+            """), {
+                "id":            str(uuid.uuid4()),
+                "camera_id":     camera_id,
+                "severity":      result.get("severity"),
+                "vehicle_count": result.get("vehicle_count", 0),
+                "color":         result.get("color", "#23c55e"),
+                "lat":           cam.get("lat"),
+                "lng":           cam.get("lng"),
+            })
+            await db.commit()
+    except Exception as exc:
+        logger.warning("[db] BottleneckEvent save skipped for %s: %s", camera_id, exc)
+
 
 async def _process_detection(camera_id: str, result: dict) -> None:
     """Post-detection hook: run incident detection, generate Claude summaries,
@@ -64,6 +129,11 @@ async def _process_detection(camera_id: str, result: dict) -> None:
     Incident detection runs unconditionally; Claude API respects a cooldown.
     """
     import time as _time
+
+    # ── Database writes (non-blocking, best-effort) ────────────────────────
+    asyncio.create_task(_save_snapshot(camera_id, result))
+    if result.get("severity") in ("heavy", "bottleneck"):
+        asyncio.create_task(_save_bottleneck_event(camera_id, result))
 
     # ── Incident detection (no external dependencies, always runs) ────────
     new_incidents = incident_detector.analyze(
@@ -78,6 +148,18 @@ async def _process_detection(camera_id: str, result: dict) -> None:
             len(new_incidents),
             ", ".join(i.type for i in new_incidents),
         )
+        for inc in new_incidents:
+            alert_log.append({
+                "alert_id":      str(uuid.uuid4()),
+                "camera_id":     camera_id,
+                "severity":      inc.severity,
+                "vehicle_count": inc.vehicle_count,
+                "color":         inc.color,
+                "timestamp":     inc.timestamp,
+                "message":       inc.description,
+                "summary":       inc.description,
+                "source":        "incident_detector",
+            })
 
     now = _time.monotonic()
     prev_time = _last_summary_time.get(camera_id, 0.0)
@@ -152,50 +234,103 @@ async def _camera_loop(camera_id: str) -> None:
         raise
 
 
-_WATCHDOG_STALE_SECS = 30   # restart camera if no new frame for this long
+_WATCHDOG_STALE_SECS  = 30   # restart camera if no new frame for this long
+_MAX_HLS_ATTEMPTS     = 5    # outer retry limit before falling back to mock
+_HLS_RETRY_SECS       = 60   # seconds between outer HLS restart attempts
 
 
-async def _hls_camera_loop(camera_id: str, source: str) -> None:
-   
-    logger.info("[%s] HLS detection task started  url=%s", camera_id, source)
+async def _hls_camera_loop(
+    camera_id: str,
+    source: str,
+    url_candidates: list[str] | None = None,
+) -> None:
+    """
+    Drive the HLS pipeline for one camera with persistent retry.
+
+    Inner retry:  run_hls_pipeline retries MAX_RETRIES (3) times with 10 s delay.
+    Outer retry:  on generator exhaustion this loop waits _HLS_RETRY_SECS (60 s)
+                  and starts a fresh generator — up to _MAX_HLS_ATTEMPTS (5) times.
+    After 5 outer failures the camera falls back to mock with an explicit warning,
+    then retries HLS every _HLS_RETRY_SECS seconds indefinitely.
+
+    url_candidates, if provided, are tried in order on each frame grab so that
+    a single failing URL does not abort the entire detection cycle.
+    """
+    hls_urls = url_candidates or [source]
+    logger.info("[%s] HLS detection task started  urls=%s", camera_id, hls_urls)
+    outer_attempt = 0
+
     try:
-        while True:                     # watchdog restart loop
-            gen = run_hls_pipeline(camera_id=camera_id, hls_url=source)
-            restarted_by_watchdog = False
+        while True:
+            outer_attempt += 1
+            logger.info(
+                "[%s] HLS outer attempt %d/%d …",
+                camera_id, outer_attempt, _MAX_HLS_ATTEMPTS,
+            )
+            gen = run_hls_pipeline(camera_id=camera_id, hls_urls=hls_urls)
+            got_live_frame = False
 
             while True:
                 try:
                     result: dict = await asyncio.to_thread(next, gen)
                     latest_detections[camera_id] = result
+                    if not got_live_frame:
+                        logger.info("[%s] HLS stream live — real data flowing.", camera_id)
+                        outer_attempt = 0   # reset on first successful frame
+                    got_live_frame = True
                     logger.debug("[%s] count=%d severity=%s",
                                  camera_id, result["vehicle_count"], result["severity"])
                     await _process_detection(camera_id, result)
                 except StopIteration:
-                    logger.info("[%s] HLS generator exhausted.", camera_id)
-                    return              # pipeline fell back to mock; let it run to end
+                    logger.warning("[%s] HLS generator exhausted.", camera_id)
+                    break
                 except Exception as exc:
                     logger.error("[%s] HLS task error: %s", camera_id, exc, exc_info=True)
-                    break               # inner break → retry via watchdog loop
+                    break
 
-                # ── Watchdog check (fix 4) ────────────────────────────────
+                # Watchdog
                 last_ts = latest_detections.get(camera_id, {}).get("timestamp")
                 if last_ts:
                     age = (datetime.now(timezone.utc) -
                            datetime.fromisoformat(last_ts)).total_seconds()
                     if age > _WATCHDOG_STALE_SECS:
                         logger.warning(
-                            "[%s] Watchdog: no update in %.0fs — restarting stream.",
+                            "[%s] Watchdog: no frame in %.0fs — restarting stream.",
                             camera_id, age,
                         )
-                        restarted_by_watchdog = True
-                        break           # break inner loop → new generator
+                        break
+                await asyncio.sleep(0)
 
-                await asyncio.sleep(0)  # yield event loop between frames
+            if outer_attempt < _MAX_HLS_ATTEMPTS:
+                logger.warning(
+                    "[%s] HLS attempt %d/%d failed — retrying in %ds …",
+                    camera_id, outer_attempt, _MAX_HLS_ATTEMPTS, _HLS_RETRY_SECS,
+                )
+                await asyncio.sleep(_HLS_RETRY_SECS)
+            else:
+                logger.warning(
+                    "WARNING: Camera %s using MOCK DATA — stream unavailable after %d attempts",
+                    camera_id, _MAX_HLS_ATTEMPTS,
+                )
+                # Run mock temporarily while we keep trying HLS in background cadence
+                mock_gen = __import__(
+                    "detection.mock_pipeline", fromlist=["run_mock_pipeline"]
+                ).run_mock_pipeline(camera_id=camera_id)
+                mock_frames = 0
+                while mock_frames < 20:   # ~60 s of mock (3 s/frame × 20), then retry HLS
+                    try:
+                        result = await asyncio.to_thread(next, mock_gen)
+                        latest_detections[camera_id] = result
+                        await _process_detection(camera_id, result)
+                        mock_frames += 1
+                    except StopIteration:
+                        break
+                    except Exception:
+                        break
+                    await asyncio.sleep(_POLL_INTERVAL)
 
-            if not restarted_by_watchdog:
-                # Non-watchdog exit (e.g. total failure already handled by
-                # the pipeline's own mock fallback) — stop the outer loop.
-                break
+                logger.info("[%s] Retrying HLS after mock interlude …", camera_id)
+                outer_attempt = 0   # reset so we get another full set of retries
 
     except asyncio.CancelledError:
         logger.info("[%s] HLS task cancelled.", camera_id)
@@ -240,15 +375,34 @@ async def lifespan(app: FastAPI):
     logger.info("Running Traffic Watch camera discovery …")
     cameras: list[dict] = await asyncio.to_thread(discover_cameras)
 
-    # Fall back to mock if nothing real was found
-    if not cameras or all(c["source"] == "mock" for c in cameras):
-        logger.warning("No live Traffic Watch streams found — using mock pipeline for demo.")
+    # Log discovery outcome; keep HLS cameras even if ffprobe couldn't validate them —
+    # _hls_camera_loop will retry persistently rather than silently falling to mock.
+    if not cameras:
+        logger.error("[lifespan] Discovery returned empty list — using mock fallback.")
         cameras = [
-            {"camera_id": "port_louis", "source": "mock",
-             "name": "Port Louis (mock)", "origin": "fallback", "validated": False},
-            {"camera_id": "grand_baie", "source": "mock",
-             "name": "Grand Baie (mock)", "origin": "fallback", "validated": False},
+            {"camera_id": "caudan_north", "source": "mock", "lat": -20.1626, "lng": 57.4939,
+             "name": "Caudan North — Port Louis",              "origin": "fallback", "validated": False},
+            {"camera_id": "caudan_south", "source": "mock", "lat": -20.1640, "lng": 57.4945,
+             "name": "Caudan South — Port Louis",              "origin": "fallback", "validated": False},
+            {"camera_id": "la_chaussee",  "source": "mock", "lat": -20.1608, "lng": 57.4972,
+             "name": "La Chaussee Street — Port Louis",        "origin": "fallback", "validated": False},
+            {"camera_id": "casernes",     "source": "mock", "lat": -20.1590, "lng": 57.4960,
+             "name": "Casernes / Brabant Street — Port Louis", "origin": "fallback", "validated": False},
         ]
+    else:
+        n_hls  = sum(1 for c in cameras if c["source"].endswith(".m3u8"))
+        n_mock = sum(1 for c in cameras if c["source"] == "mock")
+        n_val  = sum(1 for c in cameras if c.get("validated"))
+        logger.info(
+            "[lifespan] %d camera(s): %d HLS (%d validated by ffprobe), %d mock.",
+            len(cameras), n_hls, n_val, n_mock,
+        )
+        if n_hls > 0 and n_val == 0:
+            logger.warning(
+                "[lifespan] No HLS streams validated — will attempt anyway and retry "
+                "every %ds (up to %d times) before using mock data.",
+                _HLS_RETRY_SECS, _MAX_HLS_ATTEMPTS,
+            )
 
     _active_cameras = cameras
 
@@ -258,7 +412,7 @@ async def lifespan(app: FastAPI):
         if src == "mock":
             coro = _camera_loop(cam["camera_id"])
         elif src.endswith(".m3u8"):
-            coro = _hls_camera_loop(cam["camera_id"], src)
+            coro = _hls_camera_loop(cam["camera_id"], src, cam.get("url_candidates"))
         else:
             coro = _real_camera_loop(cam["camera_id"], src)
 
@@ -319,11 +473,45 @@ async def root(request: Request):
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, error: str = None):
+async def login_page(request: Request, error: str = None, success: str = None):
     user = get_current_user(request)
     if user:
         return RedirectResponse(url="/map", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "error": error})
+    return templates.TemplateResponse("login.html", {"request": request, "error": error, "success": success})
+
+
+@app.get("/signup", response_class=HTMLResponse)
+async def signup_page(request: Request):
+    user = get_current_user(request)
+    if user:
+        return RedirectResponse(url="/map", status_code=302)
+    return templates.TemplateResponse("signup.html", {"request": request, "error": None})
+
+
+@app.post("/signup", response_class=HTMLResponse)
+async def signup_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    if len(username) < 3:
+        return templates.TemplateResponse(
+            "signup.html",
+            {"request": request, "error": "Username must be at least 3 characters."},
+            status_code=400,
+        )
+    if password != confirm_password:
+        return templates.TemplateResponse(
+            "signup.html",
+            {"request": request, "error": "Passwords do not match."},
+            status_code=400,
+        )
+    # Demo: no DB write — redirect to login with a success message
+    return RedirectResponse(
+        url=f"/login?success=Account+created+successfully.+Please+sign+in.",
+        status_code=302,
+    )
 
 
 @app.post("/login", response_class=HTMLResponse)
@@ -512,6 +700,8 @@ async def api_cameras():
         result.append({
             "camera_id":        cam["camera_id"],
             "name":             cam.get("name", cam["camera_id"]),
+            "lat":              cam.get("lat"),
+            "lng":              cam.get("lng"),
             "source":           src,
             "stream_base":      cam.get("stream_base", ""),
             "stream_type":      stream_type,
@@ -541,6 +731,45 @@ async def api_incidents_camera(camera_id: str):
     if camera_id not in latest_detections:
         raise HTTPException(status_code=404, detail=f"Camera '{camera_id}' not found.")
     return incident_detector.get_incidents_by_camera(camera_id)
+
+
+@app.post("/api/demo/escalate", response_class=JSONResponse)
+async def api_demo_escalate():
+    """Override caudan_north to bottleneck severity for demo purposes."""
+    demo_result = {
+        "camera_id":     "caudan_north",
+        "timestamp":     datetime.now(timezone.utc).isoformat(),
+        "vehicle_count": 38,
+        "severity":      "bottleneck",
+        "color":         "#8b31c7",
+        "fps_processed": 1.0,
+        "frame_shape":   [720, 1280],
+    }
+    latest_detections["caudan_north"] = demo_result
+    await _process_detection("caudan_north", demo_result)
+    return {"ok": True, "message": "Demo bottleneck triggered on caudan_north"}
+
+
+@app.websocket("/ws/detections")
+async def ws_detections(websocket: WebSocket):
+    await websocket.accept()
+    connected_clients.add(websocket)
+    try:
+        while True:
+            await websocket.send_text(json.dumps(latest_detections))
+            await asyncio.sleep(1)
+    except Exception:
+        pass
+    finally:
+        connected_clients.discard(websocket)
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("analytics.html", {"request": request, "user": user})
 
 
 if __name__ == "__main__":
