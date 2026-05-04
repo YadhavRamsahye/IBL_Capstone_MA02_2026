@@ -63,6 +63,29 @@ _last_summary_time: dict[str, float] = {}
 connected_clients: set = set()
 
 
+# ── Sentinel pattern for safe generator iteration in async context ────────
+#
+# In Python 3.12, a StopIteration raised inside `asyncio.to_thread(next, gen)`
+# is converted to RuntimeError before our `except StopIteration:` clause can
+# catch it (PEP 479-related behaviour for threads). To work around this we
+# wrap the bare `next()` call in a helper that catches StopIteration on the
+# worker thread and returns a sentinel object instead. The async caller then
+# tests for the sentinel by identity to detect generator exhaustion.
+_GEN_DONE = object()
+
+
+def _safe_next(gen):
+    """Pull the next item from a sync generator, returning _GEN_DONE on exhaustion.
+
+    Other exceptions are allowed to propagate so the caller can log them
+    via the usual `except Exception` branch.
+    """
+    try:
+        return next(gen)
+    except StopIteration:
+        return _GEN_DONE
+
+
 async def _save_snapshot(camera_id: str, result: dict) -> None:
     """Persist a detection result to TrafficSnapshots (best-effort, non-blocking)."""
     if not DB_AVAILABLE or _AsyncSession is None:
@@ -218,14 +241,14 @@ async def _camera_loop(camera_id: str) -> None:
     try:
         while True:
             try:
-                result: dict = await asyncio.to_thread(next, gen)
+                result = await asyncio.to_thread(_safe_next, gen)
+                if result is _GEN_DONE:
+                    logger.info("[%s] Mock generator exhausted.", camera_id)
+                    break
                 latest_detections[camera_id] = result
                 logger.debug("[%s] count=%d severity=%s",
                              camera_id, result["vehicle_count"], result["severity"])
                 await _process_detection(camera_id, result)
-            except StopIteration:
-                logger.info("[%s] Mock generator exhausted.", camera_id)
-                break
             except Exception as exc:
                 logger.error("[%s] Mock detection error: %s", camera_id, exc, exc_info=True)
             await asyncio.sleep(_POLL_INTERVAL)
@@ -272,7 +295,10 @@ async def _hls_camera_loop(
 
             while True:
                 try:
-                    result: dict = await asyncio.to_thread(next, gen)
+                    result = await asyncio.to_thread(_safe_next, gen)
+                    if result is _GEN_DONE:
+                        logger.warning("[%s] HLS generator exhausted.", camera_id)
+                        break
                     latest_detections[camera_id] = result
                     if not got_live_frame:
                         logger.info("[%s] HLS stream live — real data flowing.", camera_id)
@@ -281,9 +307,6 @@ async def _hls_camera_loop(
                     logger.debug("[%s] count=%d severity=%s",
                                  camera_id, result["vehicle_count"], result["severity"])
                     await _process_detection(camera_id, result)
-                except StopIteration:
-                    logger.warning("[%s] HLS generator exhausted.", camera_id)
-                    break
                 except Exception as exc:
                     logger.error("[%s] HLS task error: %s", camera_id, exc, exc_info=True)
                     break
@@ -319,12 +342,12 @@ async def _hls_camera_loop(
                 mock_frames = 0
                 while mock_frames < 20:   # ~60 s of mock (3 s/frame × 20), then retry HLS
                     try:
-                        result = await asyncio.to_thread(next, mock_gen)
+                        result = await asyncio.to_thread(_safe_next, mock_gen)
+                        if result is _GEN_DONE:
+                            break
                         latest_detections[camera_id] = result
                         await _process_detection(camera_id, result)
                         mock_frames += 1
-                    except StopIteration:
-                        break
                     except Exception:
                         break
                     await asyncio.sleep(_POLL_INTERVAL)
@@ -344,14 +367,14 @@ async def _real_camera_loop(camera_id: str, source: str) -> None:
         gen = run_pipeline(camera_id=camera_id, source=source)
         while True:
             try:
-                result: dict = await asyncio.to_thread(next, gen)
+                result = await asyncio.to_thread(_safe_next, gen)
+                if result is _GEN_DONE:
+                    logger.warning("[%s] Real stream ended — falling back to mock.", camera_id)
+                    break
                 latest_detections[camera_id] = result
                 logger.debug("[%s] count=%d severity=%s",
                              camera_id, result["vehicle_count"], result["severity"])
                 await _process_detection(camera_id, result)
-            except StopIteration:
-                logger.warning("[%s] Real stream ended — falling back to mock.", camera_id)
-                break
             except Exception as exc:
                 logger.error("[%s] Real stream error: %s — falling back to mock.",
                              camera_id, exc, exc_info=True)
@@ -773,4 +796,4 @@ async def analytics_page(request: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True) 
