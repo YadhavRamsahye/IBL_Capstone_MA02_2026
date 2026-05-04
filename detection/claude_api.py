@@ -9,7 +9,7 @@ This module provides the ``TrafficSummaryService`` class, which:
   - Caches the last successful summary per camera for resilience.
   - Uses exponential backoff on transient failures (SRS Section 5.2.8).
 
-Author : Yadhav Sharma Ramsahye (22108355) — Scrum Master
+Author : Yadhav Sharma Ramsahye (22108355) — Developer
 Unit   : ISAD3000 Capstone Computing Project 1
 Team   : IBL Group — Traffic Bottleneck Detection System
 """
@@ -78,6 +78,24 @@ _BASE_DELAY: float = 1.0          # seconds
 _MAX_DELAY: float = 16.0          # cap for exponential growth
 _JITTER_FACTOR: float = 0.25      # +-25% randomness on delay
 
+# ---------------------------------------------------------------------------
+# Circuit-breaker state
+# ---------------------------------------------------------------------------
+# Shared across all callers (there is only one TrafficSummaryService instance).
+#
+# _CB_OPEN_UNTIL   – monotonic timestamp; breaker is open while now < this.
+#                    0.0 means closed (normal operation).
+# _CB_COOLDOWN     – how long (seconds) to keep the breaker open after a
+#                    permanent error (401/403/billing-400).  Auto-recovers
+#                    after cooldown: the next call becomes a probe.
+# _DISABLED_LOG_*  – state for the once-per-60 s throttle on the
+#                    "API unavailable" log message.
+# ---------------------------------------------------------------------------
+_CB_COOLDOWN: float = 300.0        # 5-minute breaker window
+_CB_OPEN_UNTIL: float = 0.0        # 0 → breaker closed
+_DISABLED_LOG_INTERVAL: float = 60.0
+_disabled_log_next: float = 0.0
+
 
 def _backoff_delay(attempt: int) -> float:
     """Return the delay (seconds) for the given attempt using exponential
@@ -90,6 +108,67 @@ def _backoff_delay(attempt: int) -> float:
     delay = min(_BASE_DELAY * (2 ** attempt), _MAX_DELAY)
     jitter = delay * _JITTER_FACTOR * (2 * random.random() - 1)
     return max(0, delay + jitter)
+
+
+# ---------------------------------------------------------------------------
+# Circuit-breaker helpers
+# ---------------------------------------------------------------------------
+
+def _is_permanent_api_error(exc: Exception) -> bool:
+    """Return True for errors that will NOT resolve on immediate retry.
+
+    Permanent:  401 Unauthorised (bad/missing key), 403 Forbidden,
+                400 responses that mention billing / credit balance.
+    Transient:  5xx server errors, 429 rate-limit, network failures
+                → handled by the existing exponential-backoff loop.
+    """
+    status = getattr(exc, "status_code", None)
+    if status in (401, 403):
+        return True
+    if status == 400:
+        msg = str(exc).lower()
+        if any(kw in msg for kw in ("credit", "billing", "balance", "quota")):
+            return True
+    return False
+
+
+def _api_usable() -> bool:
+    """Return True when it is worth attempting the Claude API.
+
+    Returns False — fast-path to template — if ANY of the following hold:
+      - ANTHROPIC_API_KEY is unset or blank
+      - CLAUDE_API_DISABLED=1 is set in the environment (kill switch for demos)
+      - the circuit breaker is currently open (monotonic clock check)
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return False
+    if os.environ.get("CLAUDE_API_DISABLED", "").strip() == "1":
+        return False
+    if time.monotonic() < _CB_OPEN_UNTIL:
+        return False
+    return True
+
+
+def _open_circuit_breaker(exc: Exception) -> None:
+    """Open the circuit breaker for ``_CB_COOLDOWN`` seconds."""
+    global _CB_OPEN_UNTIL
+    _CB_OPEN_UNTIL = time.monotonic() + _CB_COOLDOWN
+    logger.warning(
+        "Circuit breaker OPEN for %.0fs — permanent API error: %s",
+        _CB_COOLDOWN, exc,
+    )
+
+
+def _log_api_unavailable_throttled() -> None:
+    """Emit one INFO log per ``_DISABLED_LOG_INTERVAL`` seconds."""
+    global _disabled_log_next
+    now = time.monotonic()
+    if now >= _disabled_log_next:
+        logger.info(
+            "Claude API unavailable (key missing, CLAUDE_API_DISABLED=1, or "
+            "circuit breaker open) — template fallback in use."
+        )
+        _disabled_log_next = now + _DISABLED_LOG_INTERVAL
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +426,29 @@ class TrafficSummaryService:
     ) -> TrafficSummary:
         """Attempt the Claude API with retries, falling back to templates.
 
-        Implements the exponential backoff strategy from SRS 5.2.8:
-          attempt 0 → ~1 s delay
-          attempt 1 → ~2 s delay
-          attempt 2 → ~4 s delay
-          (then give up and use the template)
+        Fast-path decisions (before any network call):
+          - Key missing or blank               → template immediately
+          - CLAUDE_API_DISABLED=1 in env       → template immediately (kill switch)
+          - Circuit breaker open               → template immediately
+
+        Permanent errors (401/403/billing-400) on any attempt:
+          - Open a 5-minute circuit breaker.
+          - Skip remaining retries immediately.
+          - Return template fallback.
+
+        Transient errors (5xx, 429, network blips):
+          - Retry with exponential back-off (SRS 5.2.8):
+              attempt 0 → ~1 s delay
+              attempt 1 → ~2 s delay
+              attempt 2 → ~4 s delay
+          - After all retries exhausted → template fallback.
         """
+        # ── Fast path: API is not usable right now ─────────────────────────
+        if not _api_usable():
+            _log_api_unavailable_throttled()
+            return self._fallback(data, prompt_type)
+
+        # ── Retry loop for transient errors ───────────────────────────────
         for attempt in range(_MAX_RETRIES):
             try:
                 text = await _call_claude_api(data, prompt_type)
@@ -376,6 +472,13 @@ class TrafficSummaryService:
 
             except Exception as exc:
                 self._consecutive_failures += 1
+
+                # Permanent error → open breaker, skip remaining retries.
+                if _is_permanent_api_error(exc):
+                    _open_circuit_breaker(exc)
+                    break
+
+                # Transient error → log and sleep before next attempt.
                 delay = _backoff_delay(attempt)
                 logger.warning(
                     "[%s] Claude API attempt %d/%d failed: %s — retrying in %.1fs",
@@ -388,7 +491,7 @@ class TrafficSummaryService:
                 if attempt < _MAX_RETRIES - 1:
                     await asyncio.sleep(delay)
 
-        # All retries exhausted — fall back to template.
+        # All retries exhausted (or breaker just opened) — use template.
         return self._fallback(data, prompt_type)
 
     def _fallback(self, data: DetectionData, prompt_type: str) -> TrafficSummary:
@@ -408,8 +511,8 @@ class TrafficSummaryService:
         )
         # Cache the fallback too so there is always *something* to display.
         self._cache[data.camera_id] = summary
-        logger.info(
-            "[%s] Using template fallback (consecutive API failures: %d).",
+        logger.debug(
+            "[%s] Template fallback used (consecutive API failures: %d).",
             data.camera_id,
             self._consecutive_failures,
         )
