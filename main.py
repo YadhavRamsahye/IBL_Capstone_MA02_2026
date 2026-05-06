@@ -1,3 +1,12 @@
+"""
+Author : Sahil Singh Rughoo (22414560) — Tech Lead /  Yadhav Sharma Ramsahye (22108355) - Developer
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+"""
+
+
+
+
 from __future__ import annotations
 
 import asyncio
