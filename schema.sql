@@ -1,3 +1,9 @@
+-- Author: Whitney Ramsamy Student ID : 22387675
+-- Role: Team Leader
+-- Unit   : ISAD3000 Capstone Computing Project 1
+-- Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+
+
 --Create the database
 CREATE DATABASE TrafficSystem;
 

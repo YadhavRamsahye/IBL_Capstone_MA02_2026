@@ -1,15 +1,7 @@
 """
-test_claude_api.py
-Quick verification script for the Claude API integration module.
-
-Run from the project root:
-    python test_claude_api.py
-
-Tests:
-  1. Template fallback (always works, no API key needed)
-  2. Live Claude API call (only if ANTHROPIC_API_KEY is set in .env)
-
-Author: Yadhav Sharma Ramsahye (22108355)
+Author : Yadhav Sharma Ramsahye (22108355) — Scrum Master
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System
 """
 
 from __future__ import annotations

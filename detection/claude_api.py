@@ -1,15 +1,5 @@
 """
-detection/claude_api.py
-AI-powered traffic summary generation using the Anthropic Claude API.
-
-This module provides the ``TrafficSummaryService`` class, which:
-  - Accepts detection data from the YOLO/OpenCV pipeline (or mock).
-  - Calls the Claude API (async) to generate human-readable traffic summaries.
-  - Falls back to template-based summaries when the API is unavailable.
-  - Caches the last successful summary per camera for resilience.
-  - Uses exponential backoff on transient failures (SRS Section 5.2.8).
-
-Author : Yadhav Sharma Ramsahye (22108355) — Scrum Master
+Author : Yadhav Sharma Ramsahye (22108355) — Developer
 Unit   : ISAD3000 Capstone Computing Project 1
 Team   : IBL Group — Traffic Bottleneck Detection System
 """
