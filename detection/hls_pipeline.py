@@ -33,18 +33,12 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from detection.severity import VEHICLE_CLASSES, classify, pcu_total
+from detection.stationary_tracker import StationaryTracker
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-VEHICLE_CLASSES: set[int] = {1, 2, 3, 5, 7}  # bicycle, car, motorcycle, bus, truck
-
-SEVERITY_THRESHOLDS = [
-    (30, "bottleneck", "#8b31c7"),
-    (15, "heavy",      "#e94560"),
-    (5,  "moderate",   "#f0883e"),
-    (0,  "free",       "#23c55e"),
-]
-
 MODEL_PATH      = "yolov8m.pt"
 CONF_THRESHOLD  = 0.25   # lowered for night footage (valid detections score lower)
 IOU_THRESHOLD   = 0.35   # looser NMS so queued/overlapping cars aren't merged
@@ -60,13 +54,6 @@ DEFAULT_HEIGHT  = 720
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _classify(count: int) -> tuple[str, str]:
-    for threshold, severity, color in SEVERITY_THRESHOLDS:
-        if count >= threshold:
-            return severity, color
-    return "free", "#23c55e"
-
 
 def _ffmpeg_available() -> bool:
     try:
@@ -158,7 +145,8 @@ def _detect_loop(
     the outer retry loop in run_hls_pipeline can reconnect / back off.
     """
     count_window: deque[int] = deque(maxlen=SMOOTH_WINDOW)
-    prev_centers: list = []
+    pcu_window: deque[float] = deque(maxlen=SMOOTH_WINDOW)
+    tracker = StationaryTracker(frame_interval=FRAME_INTERVAL)
     consecutive_failures = 0
 
     while True:
@@ -177,6 +165,11 @@ def _detect_loop(
                     f"[{camera_id}] {MAX_CONSECUTIVE_FAILURES} consecutive frame grabs "
                     "failed — stream appears unavailable."
                 )
+            # A gap in the stream breaks track continuity: after it, a different
+            # vehicle may occupy the same pixels and be matched as the same one
+            # "not moving". Discard the tracks rather than trust them.
+            if consecutive_failures >= 2:
+                tracker.reset()
             time.sleep(FRAME_INTERVAL)
             continue
 
@@ -206,6 +199,7 @@ def _detect_loop(
 
         raw_count: int = 0
         vehicle_boxes: list = []
+        vehicle_classes: list[int] = []
         for r in results:
             if r.boxes is None:
                 continue
@@ -215,40 +209,44 @@ def _detect_loop(
                 if int(cls_id) in VEHICLE_CLASSES:
                     raw_count += 1
                     vehicle_boxes.append(xyxy_list[i])
+                    vehicle_classes.append(int(cls_id))
 
-        # Rolling-median smoothing
+        # Rolling-median smoothing on both the raw count and the PCU load. PCU
+        # is what drives severity: a bus occupies roughly 3 cars' worth of road,
+        # so weighting by vehicle type reflects actual demand rather than
+        # treating a bicycle and a truck as equivalent.
+        raw_pcu = pcu_total(vehicle_classes)
         count_window.append(raw_count)
+        pcu_window.append(raw_pcu)
         vehicle_count = int(round(statistics.median(count_window)))
-        severity, color = _classify(vehicle_count)
+        pcu = float(statistics.median(pcu_window))
+        # Severity is saturation (PCU / this camera's capacity), so cameras with
+        # different fields of view are directly comparable.
+        severity, color, saturation = classify(pcu, camera_id)
 
-        # ── Per-frame incident signals ─────────────────────────────────────────
-        frame_area        = width * height
-        possible_incident = any(
-            (b[2] - b[0]) * (b[3] - b[1]) > 0.25 * frame_area
-            for b in vehicle_boxes
-        )
-        current_centers = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in vehicle_boxes]
-        if not possible_incident and len(current_centers) >= 5 and prev_centers:
-            stationary = sum(
-                1 for cx, cy in current_centers
-                if any(abs(cx - px) < 10 and abs(cy - py) < 10 for px, py in prev_centers)
-            )
-            if stationary / len(current_centers) > 0.70:
-                possible_incident = True
-        prev_centers = current_centers
+        # ── Incident signal ───────────────────────────────────────────────────
+        # Tracked and time-persistent: a vehicle must be held stationary across
+        # many frames before this reports anything. The previous per-frame
+        # heuristics (large box / nearest-any-centre) are gone — see the module
+        # docstring in detection/stationary_tracker.py for why they fired on
+        # ordinary traffic.
+        verdict = tracker.update(vehicle_boxes)
 
         elapsed       = time.perf_counter() - t_start
         fps_processed = round(1.0 / max(elapsed, 1e-6), 2)
 
         yield {
-            "camera_id":         camera_id,
-            "timestamp":         datetime.now(timezone.utc).isoformat(),
-            "vehicle_count":     vehicle_count,
-            "severity":          severity,
-            "color":             color,
-            "fps_processed":     fps_processed,
-            "frame_shape":       [height, width],
-            "possible_incident": possible_incident,
+            "camera_id":          camera_id,
+            "timestamp":          datetime.now(timezone.utc).isoformat(),
+            "vehicle_count":      vehicle_count,
+            "pcu":                round(pcu, 2),
+            "saturation":         round(saturation, 3),
+            "severity":           severity,
+            "color":              color,
+            "fps_processed":      fps_processed,
+            "frame_shape":        [height, width],
+            "possible_incident":  verdict.is_incident,
+            "incident_detail":    verdict.to_dict(),
         }
 
         # Sleep the remainder of the frame interval so YOLO time is included

@@ -25,8 +25,10 @@ logger = logging.getLogger(__name__)
 HOST     = os.getenv("DB_HOST",     "localhost")
 PORT     = int(os.getenv("DB_PORT", "5432"))
 USER     = os.getenv("DB_USER",     "postgres")
-PASSWORD = os.getenv("DB_PASSWORD", "tqu9vfds")
-DB_NAME  = os.getenv("DB_NAME",     "TrafficSystem")
+# No default: the password used to be hardcoded here, which put a real
+# credential into git history. It must come from the environment.
+PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME  = os.getenv("DB_NAME",     "trafficsystem")
 
 DATABASE_URL = f"postgresql+asyncpg://{USER}:{PASSWORD}@{HOST}:{PORT}/{DB_NAME}"
 
@@ -44,7 +46,12 @@ def _postgres_reachable() -> bool:
         return False
 
 
-if not _postgres_reachable():
+if not PASSWORD:
+    logger.warning(
+        "[db] DB_PASSWORD is not set — starting without persistence. "
+        "Add DB_PASSWORD to your .env file to enable the database."
+    )
+elif not _postgres_reachable():
     logger.warning(
         "[db] PostgreSQL not reachable at %s:%d — starting without persistence. "
         "Set DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME to connect.",

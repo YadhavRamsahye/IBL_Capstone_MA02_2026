@@ -42,9 +42,13 @@ class DetectionData:
     timestamp: str         # ISO-8601 UTC string
     fps_processed: float = 0.0
     frame_shape: list[int] = field(default_factory=lambda: [720, 1280])
+    # Current severity of every camera, so a detour can be checked against live
+    # conditions before it is recommended. Optional: absent means "unknown",
+    # in which case the static suggestion is used unchanged.
+    live_severity: Optional[dict] = None
 
     @classmethod
-    def from_dict(cls, data: dict) -> "DetectionData":
+    def from_dict(cls, data: dict, live_severity: Optional[dict] = None) -> "DetectionData":
         """Build a ``DetectionData`` from the dict yielded by the pipeline."""
         return cls(
             camera_id=data["camera_id"],
@@ -54,6 +58,7 @@ class DetectionData:
             timestamp=data.get("timestamp", datetime.now(timezone.utc).isoformat()),
             fps_processed=data.get("fps_processed", 0.0),
             frame_shape=data.get("frame_shape", [720, 1280]),
+            live_severity=live_severity,
         )
 
 
@@ -77,6 +82,38 @@ _MAX_RETRIES: int = 3
 _BASE_DELAY: float = 1.0          # seconds
 _MAX_DELAY: float = 16.0          # cap for exponential growth
 _JITTER_FACTOR: float = 0.25      # +-25% randomness on delay
+
+# Circuit breaker: after this many consecutive failures the API is skipped
+# entirely for ``_BREAKER_COOLDOWN`` seconds.  Without this the service would
+# re-attempt (and re-sleep) on every detection cycle of every camera even when
+# the failure is permanent — e.g. an exhausted credit balance.
+_BREAKER_THRESHOLD: int = 5
+_BREAKER_COOLDOWN: float = 300.0  # seconds before a single probe is allowed
+
+# HTTP status codes that can never succeed on retry.  These are client-side
+# errors (bad request, auth, exhausted credit, missing model) — retrying only
+# wastes time and floods the log.  429 and 5xx are excluded: those are genuinely
+# transient and remain eligible for backoff.
+_NON_RETRYABLE_STATUS: frozenset[int] = frozenset({400, 401, 403, 404, 422})
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Return ``True`` if retrying ``exc`` could plausibly succeed.
+
+    Anthropic SDK errors carry a ``status_code``; anything in
+    ``_NON_RETRYABLE_STATUS`` is a permanent client error.  A missing API key
+    or absent ``anthropic`` package (``RuntimeError`` from ``_get_client``) is
+    likewise permanent.  Everything else — timeouts, connection resets, 429,
+    5xx — is treated as transient.
+    """
+    if isinstance(exc, RuntimeError):
+        return False
+
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status not in _NON_RETRYABLE_STATUS
+
+    return True
 
 
 def _backoff_delay(attempt: int) -> float:
@@ -106,7 +143,25 @@ _SEVERITY_LABELS: dict[str, str] = {
 
 # Pre-written route suggestions per well-known camera location.  If a camera
 # is not listed here the template uses a generic suggestion.
+# Cameras whose road a given detour actually routes traffic onto. Used to
+# suppress a suggestion when the alternative is itself congested — advising a
+# driver onto a jammed road is worse than giving no advice, and the system has
+# the live data to know the difference.
+_ROUTE_COVERED_BY: dict[str, str] = {
+    "caudan_north": "caudan_south",
+    "caudan_south": "caudan_north",
+    "la_chaussee":  "casernes",
+    "casernes":     "la_chaussee",
+}
+
 _ROUTE_SUGGESTIONS: dict[str, str] = {
+    # Keys must match the camera IDs produced by discover_cameras() — the
+    # earlier "caudan" entry never matched "caudan_north"/"caudan_south", so
+    # those cameras silently fell through to the generic suggestion.
+    "caudan_north":      "Try the A1 motorway northbound or the Quay D waterfront detour.",
+    "caudan_south":      "Try the A1 motorway southbound or the Quay D waterfront detour.",
+    "la_chaussee":       "Consider Place d'Armes or the Pope Hennessy Street bypass.",
+    "casernes":          "Consider Brabant Street or the Sir William Newton Street detour.",
     "port_louis":        "Consider alternative routes via the M1 motorway or Harbour Bridge bypass.",
     "grand_baie":        "Consider using the B13 coastal road or Royal Road as an alternative.",
     "caudan":            "Try the A1 motorway northbound or the Quay D waterfront detour.",
@@ -115,6 +170,27 @@ _ROUTE_SUGGESTIONS: dict[str, str] = {
     "curepipe":          "Try the A10 towards Floreal or the Forest Side detour.",
     "rose_hill":         "Consider the Stanley–Beau Bassin connector or Route Hugnin.",
 }
+
+
+def route_advice(camera_id: str, live_severity: dict[str, str] | None = None) -> str:
+    """Detour text for a camera, suppressed when the alternative is also busy.
+
+    ``live_severity`` maps camera_id → current severity. When the camera that
+    watches the suggested alternative is itself heavy or bottlenecked, the
+    named detour is withheld: routing drivers onto a road the system can see is
+    jammed is worse than declining to advise.
+    """
+    suggestion = _ROUTE_SUGGESTIONS.get(camera_id)
+    if not suggestion:
+        return "Consider using an alternative route to avoid delays."
+
+    alt_cam = _ROUTE_COVERED_BY.get(camera_id)
+    if live_severity and alt_cam:
+        alt_state = live_severity.get(alt_cam)
+        if alt_state in ("heavy", "bottleneck"):
+            return ("Alternative routes are also congested — expect delays on "
+                    "any approach.")
+    return suggestion
 
 
 def _template_summary(data: DetectionData) -> str:
@@ -133,11 +209,7 @@ def _template_summary(data: DetectionData) -> str:
 
     # Append route suggestion for heavy / bottleneck.
     if data.severity in ("heavy", "bottleneck"):
-        suggestion = _ROUTE_SUGGESTIONS.get(
-            data.camera_id,
-            "Consider using an alternative route to avoid delays.",
-        )
-        return f"{base} {suggestion}"
+        return f"{base} {route_advice(data.camera_id, data.live_severity)}"
 
     return base
 
@@ -205,22 +277,20 @@ def _get_client():
     return _client
 
 
-# The model used for all summary generation (cost-effective for short text).
-_MODEL: str = "claude-sonnet-4-20250514"
+# The model used for all summary generation.  Haiku is sufficient here: the
+# facts are supplied in the prompt (including the detour), so the model only
+# phrases them — there is nothing for it to reason about or recall.
+_MODEL: str = "claude-haiku-4-5"
 
 # System prompt that shapes all Claude responses for traffic summaries.
+# Kept deliberately short: it is re-sent on every request and is far below the
+# minimum cacheable prefix, so every token here is billed on every call.
 _SYSTEM_PROMPT: str = (
-    "You are an AI traffic analyst for the IBL Group Traffic Bottleneck "
-    "Detection System in Mauritius. Your job is to generate short, clear "
-    "traffic summaries for a public-facing dashboard.\n\n"
-    "Rules:\n"
-    "- Keep every summary to exactly 2-3 sentences.\n"
-    "- State the location, vehicle count, and severity level.\n"
-    "- For heavy or bottleneck severity, suggest one specific alternative "
-    "route in Mauritius.\n"
-    "- Use professional but accessible language (no jargon).\n"
-    "- Do NOT include timestamps, technical details, or markdown formatting.\n"
-    "- Do NOT start with 'Sure' or any preamble — go straight to the summary."
+    "Traffic analyst for a public dashboard in Mauritius. Write plain-language "
+    "traffic summaries.\n"
+    "- Two sentences maximum. No preamble, markdown, or timestamps.\n"
+    "- State location, vehicle count, and severity.\n"
+    "- If a detour is supplied, rephrase that one. Never invent a road name."
 )
 
 
@@ -248,26 +318,29 @@ async def _call_claude_api(data: DetectionData, prompt_type: str = "summary") ->
     """
     client = _get_client()
 
+    # Supply the curated detour rather than asking the model to recall one —
+    # road names are the only part of the summary the model could get wrong.
+    detour = ""
+    if data.severity in ("heavy", "bottleneck"):
+        detour = "\nDetour: " + route_advice(data.camera_id, data.live_severity)
+
+    # `color` is dashboard styling the model never mentions, so it is not sent.
+    facts = (
+        f"Location: {_camera_display_name(data.camera_id)}\n"
+        f"Vehicles: {data.vehicle_count}\n"
+        f"Severity: {data.severity}{detour}"
+    )
     if prompt_type == "alert":
-        user_message = (
-            f"Generate a short ALERT description for this traffic event:\n"
-            f"- Camera: {_camera_display_name(data.camera_id)}\n"
-            f"- Vehicle count: {data.vehicle_count}\n"
-            f"- Severity: {data.severity}\n"
-            f"Include an urgent tone and suggest one alternative route."
-        )
+        user_message = f"Urgent alert:\n{facts}"
     else:
-        user_message = (
-            f"Generate a traffic summary for this detection:\n"
-            f"- Camera location: {_camera_display_name(data.camera_id)}\n"
-            f"- Vehicle count: {data.vehicle_count}\n"
-            f"- Severity: {data.severity}\n"
-            f"- Colour code: {data.color}"
-        )
+        user_message = f"Summary:\n{facts}"
 
     response = await client.messages.create(
         model=_MODEL,
-        max_tokens=200,
+        # Safety cap only — billing is on tokens actually generated, so the
+        # length control that saves money is the two-sentence rule in the
+        # system prompt, not this ceiling.
+        max_tokens=150,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
     )
@@ -299,12 +372,18 @@ class TrafficSummaryService:
     def __init__(self) -> None:
         # Cache: camera_id -> last successful TrafficSummary
         self._cache: dict[str, TrafficSummary] = {}
-        # Track consecutive API failures for circuit-breaker logging.
+        # Track consecutive API failures to drive the circuit breaker.
         self._consecutive_failures: int = 0
+        # Monotonic timestamp before which the API must not be called at all.
+        # 0.0 means the circuit is closed (normal operation).
+        self._breaker_open_until: float = 0.0
+        # Guards against every camera logging the same "circuit open" message.
+        self._breaker_logged: bool = False
 
     # -- Public methods -----------------------------------------------------
 
-    async def generate_summary(self, detection: dict) -> TrafficSummary:
+    async def generate_summary(self, detection: dict,
+                               live_severity: Optional[dict] = None) -> TrafficSummary:
         """Generate a traffic summary for the given detection result.
 
         Parameters
@@ -320,16 +399,17 @@ class TrafficSummaryService:
             Always returns a summary — either from the Claude API or from
             the template fallback.
         """
-        data = DetectionData.from_dict(detection)
+        data = DetectionData.from_dict(detection, live_severity)
         summary = await self._try_claude_api(data, prompt_type="summary")
         return summary
 
-    async def generate_alert_description(self, detection: dict) -> TrafficSummary:
+    async def generate_alert_description(self, detection: dict,
+                                         live_severity: Optional[dict] = None) -> TrafficSummary:
         """Generate an alert-specific description for heavy/bottleneck events.
 
         Same resilience guarantees as ``generate_summary``.
         """
-        data = DetectionData.from_dict(detection)
+        data = DetectionData.from_dict(detection, live_severity)
         summary = await self._try_claude_api(data, prompt_type="alert")
         return summary
 
@@ -352,11 +432,23 @@ class TrafficSummaryService:
           attempt 1 → ~2 s delay
           attempt 2 → ~4 s delay
           (then give up and use the template)
+
+        Two guards keep a persistent outage from flooding the API and the log:
+
+        * Permanent errors (see ``_is_retryable``) abandon the retry loop
+          immediately rather than sleeping through attempts that cannot work.
+        * After ``_BREAKER_THRESHOLD`` consecutive failures the circuit opens
+          and every call short-circuits to the template for
+          ``_BREAKER_COOLDOWN`` seconds, after which a single probe is allowed
+          through.  One success closes the circuit.
         """
+        if self._breaker_is_open():
+            return self._fallback(data, prompt_type)
+
         for attempt in range(_MAX_RETRIES):
             try:
                 text = await _call_claude_api(data, prompt_type)
-                self._consecutive_failures = 0
+                self._close_breaker()
 
                 summary = TrafficSummary(
                     camera_id=data.camera_id,
@@ -376,6 +468,16 @@ class TrafficSummaryService:
 
             except Exception as exc:
                 self._consecutive_failures += 1
+
+                if not _is_retryable(exc):
+                    logger.warning(
+                        "[%s] Claude API failed permanently (not retryable): %s",
+                        data.camera_id,
+                        exc,
+                    )
+                    self._maybe_open_breaker()
+                    return self._fallback(data, prompt_type)
+
                 delay = _backoff_delay(attempt)
                 logger.warning(
                     "[%s] Claude API attempt %d/%d failed: %s — retrying in %.1fs",
@@ -389,7 +491,51 @@ class TrafficSummaryService:
                     await asyncio.sleep(delay)
 
         # All retries exhausted — fall back to template.
+        self._maybe_open_breaker()
         return self._fallback(data, prompt_type)
+
+    # -- Circuit breaker ----------------------------------------------------
+
+    def _breaker_is_open(self) -> bool:
+        """Return ``True`` while the API should be skipped entirely.
+
+        Once the cooldown elapses this returns ``False`` so exactly one probe
+        call is attempted; the breaker stays armed until that probe either
+        succeeds (closing it) or fails (re-arming the cooldown).
+        """
+        if self._breaker_open_until == 0.0:
+            return False
+
+        if time.monotonic() >= self._breaker_open_until:
+            logger.info("Claude API cooldown elapsed — probing with one request.")
+            self._breaker_open_until = 0.0
+            self._breaker_logged = False
+            return False
+
+        return True
+
+    def _maybe_open_breaker(self) -> None:
+        """Open the circuit once failures cross ``_BREAKER_THRESHOLD``."""
+        if self._consecutive_failures < _BREAKER_THRESHOLD:
+            return
+
+        self._breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN
+        if not self._breaker_logged:
+            logger.warning(
+                "Claude API circuit OPEN after %d consecutive failures — "
+                "using template summaries for the next %.0fs.",
+                self._consecutive_failures,
+                _BREAKER_COOLDOWN,
+            )
+            self._breaker_logged = True
+
+    def _close_breaker(self) -> None:
+        """Reset all failure state after a successful call."""
+        if self._consecutive_failures >= _BREAKER_THRESHOLD:
+            logger.info("Claude API recovered — circuit CLOSED.")
+        self._consecutive_failures = 0
+        self._breaker_open_until = 0.0
+        self._breaker_logged = False
 
     def _fallback(self, data: DetectionData, prompt_type: str) -> TrafficSummary:
         """Build a template-based summary (zero external dependencies)."""
@@ -408,7 +554,11 @@ class TrafficSummaryService:
         )
         # Cache the fallback too so there is always *something* to display.
         self._cache[data.camera_id] = summary
-        logger.info(
+        # While the circuit is open this runs on every detection cycle of every
+        # camera, so keep it at debug — the single "circuit OPEN" warning
+        # already records the outage.
+        logger.log(
+            logging.DEBUG if self._breaker_open_until else logging.INFO,
             "[%s] Using template fallback (consecutive API failures: %d).",
             data.camera_id,
             self._consecutive_failures,

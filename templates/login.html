@@ -187,6 +187,11 @@
         }
 
         .signup-link a:hover { text-decoration: underline; }
+
+        @media (max-width: 480px) {
+            body { align-items: flex-start; padding-top: 24px; }
+            .login-container { padding: 32px 20px; margin: 0 16px 24px; border-radius: 12px; }
+        }
     </style>
 </head>
 <body>
@@ -201,7 +206,7 @@
                 </svg>
             </div>
             <h1>AI Traffic Bottleneck<br>Detection System</h1>
-            <p>Mauritius Road Network Intelligence</p>
+            <p>Port Louis Traffic Intelligence</p>
         </div>
 
         {% if success %}

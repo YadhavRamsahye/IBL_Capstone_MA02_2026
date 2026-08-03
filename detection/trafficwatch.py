@@ -262,16 +262,7 @@ def _resolve_source(
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def discover_cameras() -> list[dict]:
-    """
-    Build and validate the MYT Traffic Watch camera list.
 
-    Validation uses ffprobe (5 s timeout per URL).  If ffprobe is not
-    installed, all cameras are returned unvalidated — the HLS pipeline
-    will attempt them anyway and fall back to mock on failure.
-
-    Never returns an empty list; falls back to FALLBACK_CAMERAS only if
-    MYT_CAMERAS itself is somehow empty (defensive guard).
-    """
     logger.info("=" * 62)
     logger.info("[trafficwatch] MYT Traffic Watch — camera discovery")
     logger.info("  Source: https://www.myt.mu/sinformer/trafficwatch/")

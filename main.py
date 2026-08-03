@@ -13,8 +13,11 @@ import asyncio
 import json
 import logging
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+
+from urllib.parse import quote_plus
 
 from fastapi import FastAPI, HTTPException, Request, Form, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -32,7 +35,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from database import DB_AVAILABLE, AsyncSessionLocal as _AsyncSession
+from detection.severity import capacity_for
+from auth import (
+    authenticate, create_user, get_current_user, get_session_secret,
+    record_audit, require_admin, require_user, websocket_user,
+)
 
 from detection.mock_pipeline import run_mock_pipeline
 from detection.pipeline import run_pipeline
@@ -59,11 +68,41 @@ _POLL_INTERVAL = 3.0
 
 # Minimum seconds between Claude API summary requests per camera.
 # Prevents flooding the API on every frame (mock yields ~7.5 fps).
-_SUMMARY_COOLDOWN = 30.0
+_SUMMARY_COOLDOWN = 180.0
 
-# Track the last severity per camera so we only generate alerts on
-# severity *transitions* (e.g., moderate -> heavy), not every frame.
+# A severity must hold for this many consecutive detections before it counts
+# as a real transition.  Raw YOLO counts jitter frame to frame, so a camera
+# sitting on a threshold boundary flaps free/moderate/heavy several times a
+# minute; without debouncing every flap bypassed the cooldown and cost an
+# API call.
+_SEVERITY_DEBOUNCE = 4
+
+# Absolute floor between API calls for one camera.  A confirmed severity
+# change shortens the wait from _SUMMARY_COOLDOWN to this, but never skips it
+# entirely — a camera parked on a threshold can confirm a transition
+# repeatedly, and without this floor those transitions alone kept the call
+# rate high.
+_MIN_SUMMARY_INTERVAL = 60.0
+
+# Vehicle-count bucket width.  Two detections in the same severity whose
+# counts fall in the same bucket produce the same summary text, so the second
+# one reuses the cached summary instead of paying for a fresh API call.
+_COUNT_BUCKET = 3
+
+# Longest a cached summary may be reused while nothing changes.  Bounds how
+# stale the dashboard prose can get on a camera sitting in one steady state.
+_SUMMARY_MAX_AGE = 900.0
+
+# Track the last *confirmed* severity per camera so we only generate alerts on
+# severity transitions (e.g., moderate -> heavy), not every frame.
 _last_severity: dict[str, str] = {}
+
+# Candidate severity awaiting confirmation, and how many consecutive
+# detections have agreed with it so far.
+_pending_severity: dict[str, tuple[str, int]] = {}
+
+# Last (severity, count bucket) a summary was actually generated for.
+_last_summary_key: dict[str, tuple[str, int]] = {}
 
 # Track the last summary generation time per camera for cooldown.
 _last_summary_time: dict[str, float] = {}
@@ -72,37 +111,58 @@ _last_summary_time: dict[str, float] = {}
 connected_clients: set = set()
 
 
+def _live_severity() -> dict[str, str]:
+    """Current severity of every camera, for validating detour suggestions.
+
+    Route advice used to be a static string per camera, so the system could
+    confidently send drivers onto a road it could see was jammed.
+    """
+    return {cid: det.get("severity", "free") for cid, det in latest_detections.items()}
+
+
 async def _save_snapshot(camera_id: str, result: dict) -> None:
-    """Persist a detection result to TrafficSnapshots (best-effort, non-blocking)."""
+    """Persist a detection result to traffic_snapshots (best-effort, non-blocking)."""
     if not DB_AVAILABLE or _AsyncSession is None:
         return
     try:
         cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
         async with _AsyncSession() as db:
             await db.execute(text("""
-                INSERT INTO cameras (id, name, latitude, longitude)
-                VALUES (:id, :name, :lat, :lng)
-                ON CONFLICT (id) DO NOTHING
+                INSERT INTO cameras (id, name, latitude, longitude, capacity_pcu)
+                VALUES (:id, :name, :lat, :lng, :capacity)
+                ON CONFLICT (id) DO UPDATE
+                    SET last_seen = NOW(), capacity_pcu = EXCLUDED.capacity_pcu
             """), {
-                "id":   camera_id,
-                "name": cam.get("name", camera_id),
-                "lat":  cam.get("lat"),
-                "lng":  cam.get("lng"),
+                "id":       camera_id,
+                "name":     cam.get("name", camera_id),
+                "lat":      cam.get("lat"),
+                "lng":      cam.get("lng"),
+                "capacity": capacity_for(camera_id),
             })
             await db.execute(text("""
-                INSERT INTO "TrafficSnapshots"
-                    (id, "CameraId", "SnapshotTime", "VehicleCount", "Severity", "fpsProcessed")
-                VALUES (:id, :camera_id, NOW(), :vehicle_count, :severity, :fps)
+                INSERT INTO traffic_snapshots
+                    (id, camera_id, snapshot_time, vehicle_count, pcu, saturation,
+                     severity, fps_processed, is_incident)
+                VALUES (:id, :camera_id, NOW(), :vehicle_count, :pcu, :saturation,
+                        :severity, :fps, :is_incident)
             """), {
                 "id":            str(uuid.uuid4()),
                 "camera_id":     camera_id,
                 "vehicle_count": result.get("vehicle_count", 0),
+                "pcu":           result.get("pcu"),
+                "saturation":    result.get("saturation"),
                 "severity":      result.get("severity", "free"),
                 "fps":           result.get("fps_processed", 0.0),
+                "is_incident":   bool(result.get("possible_incident", False)),
             })
             await db.commit()
-    except Exception as exc:
-        logger.warning("[db] Snapshot save skipped for %s: %s", camera_id, exc)
+    except SQLAlchemyError as exc:
+        # Narrow to database errors and log the traceback. A bare `except
+        # Exception` here previously reduced a schema mismatch — which made
+        # every write fail — to a single warning line that was easy to miss.
+        logger.warning(
+            "[db] Snapshot save failed for %s: %s", camera_id, exc, exc_info=True
+        )
 
 
 async def _save_bottleneck_event(camera_id: str, result: dict) -> None:
@@ -113,21 +173,57 @@ async def _save_bottleneck_event(camera_id: str, result: dict) -> None:
         cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
         async with _AsyncSession() as db:
             await db.execute(text("""
-                INSERT INTO "BottleneckEvents"
-                    (id, "CameraId", "DetectedAt", "Severity", "VehicleCount", "Color", latitude, longitude)
-                VALUES (:id, :camera_id, NOW(), :severity, :vehicle_count, :color, :lat, :lng)
+                INSERT INTO bottleneck_events
+                    (id, camera_id, detected_at, severity, vehicle_count,
+                     pcu, saturation, color, latitude, longitude)
+                VALUES (:id, :camera_id, NOW(), :severity, :vehicle_count,
+                        :pcu, :saturation, :color, :lat, :lng)
             """), {
                 "id":            str(uuid.uuid4()),
                 "camera_id":     camera_id,
                 "severity":      result.get("severity"),
                 "vehicle_count": result.get("vehicle_count", 0),
+                "pcu":           result.get("pcu"),
+                "saturation":    result.get("saturation"),
                 "color":         result.get("color", "#23c55e"),
                 "lat":           cam.get("lat"),
                 "lng":           cam.get("lng"),
             })
             await db.commit()
-    except Exception as exc:
-        logger.warning("[db] BottleneckEvent save skipped for %s: %s", camera_id, exc)
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "[db] Bottleneck event save failed for %s: %s", camera_id, exc, exc_info=True
+        )
+
+
+async def _save_incident(inc) -> None:
+    """Persist a confirmed incident so history survives a restart."""
+    if not DB_AVAILABLE or _AsyncSession is None:
+        return
+    try:
+        async with _AsyncSession() as db:
+            await db.execute(text("""
+                INSERT INTO incidents
+                    (id, camera_id, type, severity, confidence, vehicle_count,
+                     detected_at, description)
+                VALUES (:id, :camera_id, :type, :severity, :confidence,
+                        :vehicle_count, :detected_at, :description)
+                ON CONFLICT (id) DO NOTHING
+            """), {
+                "id":            inc.incident_id,
+                "camera_id":     inc.camera_id,
+                "type":          inc.type,
+                "severity":      inc.severity,
+                "confidence":    inc.confidence,
+                "vehicle_count": inc.vehicle_count,
+                "detected_at":   inc.timestamp,
+                "description":   inc.description,
+            })
+            await db.commit()
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "[db] Incident save failed for %s: %s", inc.camera_id, exc, exc_info=True
+        )
 
 
 async def _process_detection(camera_id: str, result: dict) -> None:
@@ -158,6 +254,7 @@ async def _process_detection(camera_id: str, result: dict) -> None:
             ", ".join(i.type for i in new_incidents),
         )
         for inc in new_incidents:
+            asyncio.create_task(_save_incident(inc))
             alert_log.append({
                 "alert_id":      str(uuid.uuid4()),
                 "camera_id":     camera_id,
@@ -173,21 +270,55 @@ async def _process_detection(camera_id: str, result: dict) -> None:
     now = _time.monotonic()
     prev_time = _last_summary_time.get(camera_id, 0.0)
     prev_severity = _last_severity.get(camera_id, "free")
-    current_severity = result["severity"]
+    raw_severity = result["severity"]
 
-    # Determine whether we should generate a new summary right now.
-    cooldown_elapsed = (now - prev_time) >= _SUMMARY_COOLDOWN
-    severity_changed = current_severity != prev_severity
+    # ── Debounce the raw severity ─────────────────────────────────────────
+    # Only promote a new severity once it has held for _SEVERITY_DEBOUNCE
+    # consecutive detections; a single jittery frame no longer counts as a
+    # transition and no longer bypasses the cooldown below.
+    if raw_severity == prev_severity:
+        _pending_severity.pop(camera_id, None)
+        severity_changed = False
+        current_severity = prev_severity
+    else:
+        candidate, streak = _pending_severity.get(camera_id, (raw_severity, 0))
+        streak = streak + 1 if candidate == raw_severity else 1
+        if streak >= _SEVERITY_DEBOUNCE:
+            _pending_severity.pop(camera_id, None)
+            severity_changed = True
+            current_severity = raw_severity
+        else:
+            _pending_severity[camera_id] = (raw_severity, streak)
+            severity_changed = False
+            current_severity = prev_severity   # not confirmed yet
 
-    if not cooldown_elapsed and not severity_changed:
-        return  # skip — too soon and nothing changed
+    # Determine whether we should generate a new summary right now.  A
+    # confirmed severity change shortens the wait but does not remove it.
+    elapsed = now - prev_time
+    if elapsed < _MIN_SUMMARY_INTERVAL:
+        return  # too soon under any circumstances
+    if not severity_changed and elapsed < _SUMMARY_COOLDOWN:
+        return  # steady state — wait for the full cooldown
+
+    # ── Skip the API when the summary would say the same thing ────────────
+    # The generated text only varies with severity and (coarsely) vehicle
+    # count, so an unchanged key means the cached summary is still accurate.
+    # The clock is deliberately NOT reset here: letting `elapsed` keep growing
+    # is what eventually forces the _SUMMARY_MAX_AGE refresh below, so a quiet
+    # camera still gets its prose updated instead of being frozen forever.
+    summary_key = (current_severity, result["vehicle_count"] // _COUNT_BUCKET)
+    if (summary_key == _last_summary_key.get(camera_id)
+            and not severity_changed
+            and elapsed < _SUMMARY_MAX_AGE):
+        return
 
     _last_severity[camera_id] = current_severity
     _last_summary_time[camera_id] = now
+    _last_summary_key[camera_id] = summary_key
 
     # Generate the summary in the background (non-blocking).
     try:
-        summary = await summary_service.generate_summary(result)
+        summary = await summary_service.generate_summary(result, _live_severity())
         logger.info(
             "[%s] Summary generated (source=%s): %.60s…",
             camera_id, summary.source, summary.summary,
@@ -199,7 +330,8 @@ async def _process_detection(camera_id: str, result: dict) -> None:
     # Auto-trigger alert on transition TO heavy or bottleneck.
     if severity_changed and current_severity in ("heavy", "bottleneck"):
         try:
-            alert_summary = await summary_service.generate_alert_description(result)
+            alert_summary = await summary_service.generate_alert_description(
+                result, _live_severity())
             alert = {
                 "alert_id":      str(uuid.uuid4()),
                 "camera_id":     camera_id,
@@ -447,12 +579,27 @@ async def lifespan(app: FastAPI):
     logger.info("All detection tasks stopped.")
 
 
-app = FastAPI(title="AI Traffic Bottleneck Detection - Mauritius", lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key="traffic-mauritius-secret-key-2026")
+app = FastAPI(title="AI Traffic Bottleneck Detection - Port Louis", lifespan=lifespan)
+
+# Secret comes from SESSION_SECRET; it used to be a literal committed to git,
+# which let anyone with the repo forge an admin session cookie.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=get_session_secret(),
+    https_only=os.getenv("SESSION_HTTPS_ONLY", "false").lower() == "true",
+    same_site="lax",
+)
+
+# The "null" origin was previously allowed, which let any local file:// page or
+# sandboxed iframe call the API. Origins are configurable for deployment.
+_origins = [o for o in os.getenv(
+    "CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000"
+).split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8000", "null"],
-    allow_methods=["*"],
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -463,14 +610,9 @@ if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-DEMO_USERS = {
-    "admin": "admin123",
-    "user": "password",
-}
-
-
-def get_current_user(request: Request):
-    return request.session.get("user")
+def _username(user) -> str:
+    """Session values may be a dict (current) or a bare string (older cookies)."""
+    return user.get("username") if isinstance(user, dict) else str(user)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -516,20 +658,30 @@ async def signup_submit(
             {"request": request, "error": "Passwords do not match."},
             status_code=400,
         )
-    # Demo: no DB write — redirect to login with a success message
+
+    ok, message = await create_user(username, password)
+    await record_audit(request, "signup", username, ok)
+    if not ok:
+        # Previously this path always reported success while writing nothing.
+        return templates.TemplateResponse(
+            "signup.html", {"request": request, "error": message}, status_code=400,
+        )
     return RedirectResponse(
-        url=f"/login?success=Account+created+successfully.+Please+sign+in.",
-        status_code=302,
+        url=f"/login?success={quote_plus(message)}", status_code=302,
     )
 
 
 @app.post("/login", response_class=HTMLResponse)
 async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
-    if username in DEMO_USERS and DEMO_USERS[username] == password:
-        request.session["user"] = username
+    user = await authenticate(username, password)
+    await record_audit(request, "login", username, user is not None)
+    if user:
+        request.session["user"] = user
         return RedirectResponse(url="/map", status_code=302)
     return templates.TemplateResponse(
         "login.html",
+        # Deliberately does not distinguish unknown user from wrong password —
+        # that difference tells an attacker which usernames exist.
         {"request": request, "error": "Invalid username or password."},
         status_code=401,
     )
@@ -540,7 +692,9 @@ async def map_page(request: Request):
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return templates.TemplateResponse("map.html", {"request": request, "user": user})
+    return templates.TemplateResponse(
+        "map.html", {"request": request, "user": _username(user)}
+    )
 
 
 @app.get("/logout")
@@ -550,8 +704,11 @@ async def logout(request: Request):
 
 
 
-# In-memory list of alert dicts; newest entries appended at the end.
-alert_log: list[dict] = []
+# In-memory alert ring buffer; newest entries appended at the end.
+# Bounded because this was an unbounded list that grew for the process lifetime —
+# a slow leak on any long-running deployment.
+ALERT_LOG_MAX = 500
+alert_log: deque[dict] = deque(maxlen=ALERT_LOG_MAX)
 
 
 class AlertTriggerRequest(BaseModel):
@@ -561,13 +718,13 @@ class AlertTriggerRequest(BaseModel):
 
 
 
-@app.get("/api/traffic", response_class=JSONResponse)
+@app.get("/api/traffic", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_traffic_all():
     """Return the latest detection result for every active camera."""
     return latest_detections
 
 
-@app.get("/api/traffic/{camera_id}", response_class=JSONResponse)
+@app.get("/api/traffic/{camera_id}", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_traffic_camera(camera_id: str):
     """Return the latest detection for a specific camera, or 404 if unknown."""
     result = latest_detections.get(camera_id)
@@ -576,7 +733,7 @@ async def api_traffic_camera(camera_id: str):
     return result
 
 
-@app.get("/api/summary/{camera_id}", response_class=JSONResponse)
+@app.get("/api/summary/{camera_id}", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_summary(camera_id: str):
     """Return the Claude-generated traffic summary for a specific camera.
 
@@ -604,7 +761,7 @@ async def api_summary(camera_id: str):
             detail=f"Camera '{camera_id}' not found or has no detection data yet.",
         )
 
-    result = await summary_service.generate_summary(detection)
+    result = await summary_service.generate_summary(detection, _live_severity())
     return {
         "camera_id":     result.camera_id,
         "summary":       result.summary,
@@ -615,7 +772,7 @@ async def api_summary(camera_id: str):
     }
 
 
-@app.get("/api/summaries", response_class=JSONResponse)
+@app.get("/api/summaries", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_summaries_all():
     """Return cached Claude summaries for all cameras that have one.
 
@@ -636,7 +793,7 @@ async def api_summaries_all():
     return summaries
 
 
-@app.get("/api/status", response_class=JSONResponse)
+@app.get("/api/status", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_status():
     """Return a high-level system status summary."""
     active_cameras = len(latest_detections)
@@ -654,7 +811,7 @@ async def api_status():
 
 
 
-@app.post("/api/alerts/trigger", response_class=JSONResponse, status_code=201)
+@app.post("/api/alerts/trigger", response_class=JSONResponse, status_code=201, dependencies=[Depends(require_user)])
 async def api_alerts_trigger(body: AlertTriggerRequest):
 
     detection = latest_detections.get(body.camera_id)
@@ -665,7 +822,8 @@ async def api_alerts_trigger(body: AlertTriggerRequest):
         )
 
     # Generate a Claude summary for the alert (falls back to template).
-    ai_summary = await summary_service.generate_alert_description(detection)
+    ai_summary = await summary_service.generate_alert_description(
+        detection, _live_severity())
 
     alert = {
         "alert_id":      str(uuid.uuid4()),
@@ -683,16 +841,16 @@ async def api_alerts_trigger(body: AlertTriggerRequest):
     return alert
 
 
-@app.get("/api/alerts", response_class=JSONResponse)
+@app.get("/api/alerts", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_alerts_list(limit: int = 50):
     """
     Return the most recent *limit* alerts from the in-memory log (default 50),
     newest first.
     """
-    return alert_log[-limit:][::-1]
+    return list(alert_log)[-limit:][::-1]
 
 
-@app.get("/api/cameras", response_class=JSONResponse)
+@app.get("/api/cameras", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_cameras():
     """Return the discovered camera list enriched with live detection state."""
     result = []
@@ -722,19 +880,19 @@ async def api_cameras():
     return result
 
 
-@app.get("/api/incidents", response_class=JSONResponse)
+@app.get("/api/incidents", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_incidents_all(limit: int = 100):
     """Return all incidents (resolved + active), newest first."""
     return incident_detector.get_all_incidents(limit=limit)
 
 
-@app.get("/api/incidents/active", response_class=JSONResponse)
+@app.get("/api/incidents/active", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_incidents_active():
     """Return all currently unresolved incidents across all cameras."""
     return incident_detector.get_active_incidents()
 
 
-@app.get("/api/incidents/{camera_id}", response_class=JSONResponse)
+@app.get("/api/incidents/{camera_id}", response_class=JSONResponse, dependencies=[Depends(require_user)])
 async def api_incidents_camera(camera_id: str):
     """Return all incidents for a specific camera, newest first."""
     if camera_id not in latest_detections:
@@ -742,7 +900,7 @@ async def api_incidents_camera(camera_id: str):
     return incident_detector.get_incidents_by_camera(camera_id)
 
 
-@app.post("/api/demo/escalate", response_class=JSONResponse)
+@app.post("/api/demo/escalate", response_class=JSONResponse, dependencies=[Depends(require_admin)])
 async def api_demo_escalate():
     """Override caudan_north to bottleneck severity for demo purposes."""
     demo_result = {
@@ -759,16 +917,105 @@ async def api_demo_escalate():
     return {"ok": True, "message": "Demo bottleneck triggered on caudan_north"}
 
 
+@app.get("/api/analytics/hourly", response_class=JSONResponse,
+         dependencies=[Depends(require_user)])
+async def api_analytics_hourly(hours: int = 24):
+    """Hourly mean vehicle count and saturation per camera, from real snapshots.
+
+    The analytics page previously generated its own numbers client-side from a
+    Gaussian rush-hour curve plus Math.random(), so the charts changed on every
+    reload and reflected nothing that was measured. This returns what was
+    actually recorded, and reports `available: false` when there is no data
+    rather than inventing some.
+    """
+    hours = max(1, min(hours, 168))          # clamp: 1 hour to 1 week
+    empty = {
+        "available": False,
+        "hours": hours,
+        "cameras": [],
+        "series": [],
+        "severity_counts": {},
+        "sample_count": 0,
+        "reason": "",
+    }
+
+    if not DB_AVAILABLE or _AsyncSession is None:
+        empty["reason"] = (
+            "No database connected, so no history has been recorded. "
+            "Start PostgreSQL and run run_schema.py to collect analytics."
+        )
+        return empty
+
+    try:
+        async with _AsyncSession() as db:
+            rows = (await db.execute(text("""
+                SELECT camera_id,
+                       EXTRACT(HOUR FROM snapshot_time)::int AS hour,
+                       AVG(vehicle_count)::float             AS avg_count,
+                       AVG(saturation)::float                AS avg_saturation,
+                       MAX(vehicle_count)                    AS peak_count,
+                       COUNT(*)                              AS samples
+                  FROM traffic_snapshots
+                 WHERE snapshot_time >= NOW() - make_interval(hours => :h)
+                 GROUP BY camera_id, hour
+                 ORDER BY camera_id, hour
+            """), {"h": hours})).mappings().all()
+
+            sev = (await db.execute(text("""
+                SELECT severity, COUNT(*) AS n
+                  FROM traffic_snapshots
+                 WHERE snapshot_time >= NOW() - make_interval(hours => :h)
+                 GROUP BY severity
+            """), {"h": hours})).mappings().all()
+    except SQLAlchemyError as exc:
+        logger.warning("[db] Analytics query failed: %s", exc, exc_info=True)
+        empty["reason"] = "Analytics query failed — see server logs."
+        return empty
+
+    if not rows:
+        empty["reason"] = (
+            f"No snapshots recorded in the last {hours}h. Let the detector run, "
+            "then reload."
+        )
+        return empty
+
+    return {
+        "available":       True,
+        "hours":           hours,
+        "cameras":         sorted({r["camera_id"] for r in rows}),
+        "series":          [dict(r) for r in rows],
+        "severity_counts": {r["severity"]: r["n"] for r in sev},
+        "sample_count":    sum(r["samples"] for r in rows),
+        "reason":          "",
+    }
+
+
 @app.websocket("/ws/detections")
 async def ws_detections(websocket: WebSocket):
+    # The socket carries the same live data as the REST API, so it needs the
+    # same authentication — it was previously open to anyone.
+    if not await websocket_user(websocket):
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+
     await websocket.accept()
     connected_clients.add(websocket)
+    last_payload: str | None = None
     try:
         while True:
-            await websocket.send_text(json.dumps(latest_detections))
+            payload = json.dumps(latest_detections, sort_keys=True)
+            # Push only when something actually changed. The previous loop
+            # re-sent the entire state every second to every client whether or
+            # not it differed, which is also what forced the map popup to be
+            # rebuilt continuously.
+            if payload != last_payload:
+                await websocket.send_text(payload)
+                last_payload = payload
             await asyncio.sleep(1)
-    except Exception:
-        pass
+    except WebSocketDisconnect:
+        logger.debug("WebSocket client disconnected.")
+    except (RuntimeError, ConnectionError) as exc:
+        logger.debug("WebSocket closed: %s", exc)
     finally:
         connected_clients.discard(websocket)
 
@@ -778,8 +1025,14 @@ async def analytics_page(request: Request):
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return templates.TemplateResponse("analytics.html", {"request": request, "user": user})
+    return templates.TemplateResponse(
+        "analytics.html", {"request": request, "user": _username(user)}
+    )
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    import os
+    ssl_args = {}
+    if os.path.exists("cert.pem") and os.path.exists("key.pem"):
+        ssl_args = {"ssl_certfile": "cert.pem", "ssl_keyfile": "key.pem"}
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, **ssl_args)

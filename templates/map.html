@@ -45,7 +45,14 @@ Module   : Dashboard UI / Templates
             background: linear-gradient(135deg, #e94560, #0f3460);
             border-radius: 8px; display: flex; align-items: center; justify-content: center;
         }
-        .brand-title { font-size: 16px; font-weight: 600; color: #e6edf3; white-space: nowrap; }
+        /* min-width/overflow are load-bearing: the flex parent can shrink this
+           box below the title's width, and without them the nowrap text paints
+           outside its box and over .navbar-right instead of truncating. */
+        .brand-title {
+            font-size: 16px; font-weight: 600; color: #e6edf3;
+            white-space: nowrap; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis;
+        }
         .brand-accent { color: #e94560; }
         .title-short { display: none; }
         .navbar-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
@@ -291,6 +298,13 @@ Module   : Dashboard UI / Templates
         @media (max-width: 1023px) {
             .hamburger-btn { display: flex; }
 
+            /* The hamburger appears at this width, so the full title no longer
+               fits alongside the status badge, user, links and bell. Swap to
+               the short title here rather than waiting for the 639px phone
+               breakpoint. */
+            .title-full  { display: none; }
+            .title-short { display: inline; }
+
             .sidebar {
                 position: fixed; top: 56px; left: 0; bottom: 0; width: 280px;
                 transform: translateX(-100%); z-index: 900;
@@ -329,6 +343,18 @@ Module   : Dashboard UI / Templates
             .nav-icon { width: 30px; height: 30px; }
             .brand-title { font-size: 12px; }
             .logout-btn { display: none; }
+            .nav-analytics { display: none; }
+        }
+
+        /* Leaflet popup mobile tweak */
+        .leaflet-popup-content { max-width: min(300px, 85vw) !important; }
+
+        /* Leaflet controls — mobile overrides */
+        @media (max-width: 639px) {
+            /* Hide +/- buttons — users pinch-zoom on touch */
+            .leaflet-control-zoom { display: none !important; }
+            /* Lift attribution + scale bar above the bottom stats bar */
+            .leaflet-bottom { bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important; }
         }
 
         /* Hidden demo button */
@@ -370,7 +396,7 @@ Module   : Dashboard UI / Templates
             <span class="status-text" id="systemStatus">System Online</span>
         </div>
         <div class="user-info">Logged in as <strong>{{ user }}</strong></div>
-        <a href="/analytics" style="color:#58a6ff;font-size:13px;text-decoration:none;">📊 Analytics</a>
+        <a href="/analytics" class="nav-analytics" style="color:#58a6ff;font-size:13px;text-decoration:none;white-space:nowrap;">📊 Analytics</a>
         <a href="/logout" class="logout-btn">Sign Out</a>
         <div class="bell-wrapper" id="bellWrapper">
             <button class="bell-btn" id="bellBtn" onclick="toggleAlerts()">🔔</button>
@@ -470,7 +496,7 @@ Module   : Dashboard UI / Templates
     <!-- Map -->
     <div class="map-wrapper">
         <div class="map-info-bar" id="infoBar">
-            Viewing: <strong>Mauritius Road Network</strong> &nbsp;|&nbsp;
+            Viewing: <strong>Port Louis City Centre</strong> &nbsp;|&nbsp;
             AI Detection: <span class="live">● Live</span> &nbsp;|&nbsp;
             Cameras: <strong id="infoActiveCams">—</strong> &nbsp;|&nbsp;
             Vehicles: <strong id="infoVehicles">—</strong>
@@ -511,7 +537,7 @@ Module   : Dashboard UI / Templates
 <script>
 'use strict';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = window.location.origin;
 const POLL_MS  = 5000;
 
 // Seeded with correct coordinates (Fix 3); overridden/extended by fetchCameras() at init.
@@ -538,7 +564,8 @@ const satTile = L.tileLayer(
     { maxZoom: 19, attribution: '&copy; Esri' }
 );
 
-const map = L.map('map', { center: MAURITIUS, zoom: 11, layers: [streetTile] });
+const map = L.map('map', { center: MAURITIUS, zoom: 11, layers: [streetTile], zoomControl: false });
+L.control.zoom({ position: 'topright' }).addTo(map);
 
 let currentLayer = 'streets', heatLayer = null, heatmapVisible = false;
 
@@ -594,6 +621,80 @@ async function fetchCameras() {
             .addTo(map)
             .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
     }
+}
+
+// ── Popup rendering ───────────────────────────────────────────────────────────
+// The detections WebSocket pushes once per second. Rebuilding popup HTML on
+// every push would replace the destination <input> mid-keystroke, so the typed
+// text and focus are kept here and the open popup is patched field-by-field
+// instead of re-rendered. See applyTrafficData().
+const routeDestCache = {};
+
+function escAttr(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+}
+
+function routePanelHtml(id, lat, lng) {
+    return `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
+            <div style="font-size:11px;color:#888;margin-bottom:5px;font-weight:600;">🗺 Alternative Route</div>
+            <input id="routeDest_${id}" type="text" placeholder="Enter destination…"
+                value="${escAttr(routeDestCache[id] || '')}"
+                oninput="routeDestCache['${id}'] = this.value"
+                onkeydown="if (event.key === 'Enter') { event.preventDefault(); openRoute('${id}',${lat},${lng}); }"
+                style="width:100%;padding:5px 8px;font-size:12px;border:1px solid #ddd;border-radius:4px;margin-bottom:6px;box-sizing:border-box;">
+            <button onclick="openRoute('${id}',${lat},${lng})"
+                style="width:100%;padding:5px;background:#16a34a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">
+                Get Alternative Route ↗
+            </button>
+        </div>`;
+}
+
+// Single source of truth for the badge — it is rendered from two places.
+function incidentBadgeHtml(det) {
+    if (det.possible_incident !== true) return '';
+    const d = det.incident_detail || {};
+    const why = d.reason ? ` title="${escAttr(d.reason)}"` : '';
+    const conf = d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : '';
+    return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
+}
+
+function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
+    const incidentBadge = incidentBadgeHtml(det);
+    return `
+        <div style="min-width:200px;font-family:Segoe UI,sans-serif;">
+            <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
+            <div id="popSev_${id}" style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
+            <div id="popBadge_${id}">${incidentBadge}</div>
+            <table style="font-size:12px;color:#555;width:100%;">
+                <tr><td>Vehicles</td><td><b id="popVeh_${id}">${det.vehicle_count}</b></td></tr>
+                <tr><td>FPS</td><td id="popFps_${id}">${det.fps_processed?.toFixed(2) ?? '—'}</td></tr>
+                <tr><td>Updated</td><td id="popUpd_${id}">${new Date(det.timestamp).toLocaleTimeString()}</td></tr>
+            </table>
+            ${isHeavy ? routePanelHtml(id, lat, lng) : ''}
+        </div>`;
+}
+
+// Update only the values inside an already-open popup, leaving the destination
+// input (and the user's focus and caret) untouched.
+// Returns false when the route panel needs to appear or disappear, since that
+// is a structural change a field patch cannot make.
+function patchOpenPopup(id, det, color, isHeavy, hasIncident) {
+    const sev = document.getElementById(`popSev_${id}`);
+    if (!sev) return false;                       // popup DOM not present
+    const panelPresent = !!document.getElementById(`routeDest_${id}`);
+    if (panelPresent !== isHeavy) return false;   // needs a rebuild
+
+    sev.textContent = det.severity.toUpperCase();
+    sev.style.color = color;
+    document.getElementById(`popVeh_${id}`).textContent = det.vehicle_count;
+    document.getElementById(`popFps_${id}`).textContent = det.fps_processed?.toFixed(2) ?? '—';
+    document.getElementById(`popUpd_${id}`).textContent = new Date(det.timestamp).toLocaleTimeString();
+    const badge = document.getElementById(`popBadge_${id}`);
+    if (badge) badge.innerHTML = incidentBadgeHtml(det);
+    return true;
 }
 
 // ── Sidebar drawer ────────────────────────────────────────────────────────────
@@ -661,35 +762,22 @@ function applyTrafficData(data) {
         const loc   = CAMERA_LOCS[id];
 
         if (cameraMarkers[id]) {
-            const isHeavy    = ['heavy', 'bottleneck'].includes(det.severity);
+            const marker      = cameraMarkers[id];
+            const isHeavy     = ['heavy', 'bottleneck'].includes(det.severity);
             const hasIncident = det.possible_incident === true;
-            cameraMarkers[id].setIcon(hasIncident ? camIncidentIcon(color) : camIcon(color));
+            marker.setIcon(hasIncident ? camIncidentIcon(color) : camIcon(color));
             const lat = loc?.coords[0] ?? 0, lng = loc?.coords[1] ?? 0;
-            const incidentBadge = hasIncident
-                ? `<div style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#f59e0b22;border:1px solid #f59e0b66;border-radius:10px;color:#f59e0b;font-size:11px;font-weight:600;">⚠ Possible Incident</div>`
-                : '';
-            const routePanel = isHeavy ? `
-                <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
-                    <div style="font-size:11px;color:#888;margin-bottom:5px;font-weight:600;">🗺 Alternative Route</div>
-                    <input id="routeDest_${id}" type="text" placeholder="Enter destination…"
-                        style="width:100%;padding:5px 8px;font-size:12px;border:1px solid #ddd;border-radius:4px;margin-bottom:6px;box-sizing:border-box;">
-                    <button onclick="openRoute('${id}',${lat},${lng})"
-                        style="width:100%;padding:5px;background:#16a34a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">
-                        Get Alternative Route ↗
-                    </button>
-                </div>` : '';
-            cameraMarkers[id].setPopupContent(`
-                <div style="min-width:200px;font-family:Segoe UI,sans-serif;">
-                    <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
-                    <div style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
-                    ${incidentBadge}
-                    <table style="font-size:12px;color:#555;width:100%;">
-                        <tr><td>Vehicles</td><td><b>${det.vehicle_count}</b></td></tr>
-                        <tr><td>FPS</td><td>${det.fps_processed?.toFixed(2) ?? '—'}</td></tr>
-                        <tr><td>Updated</td><td>${new Date(det.timestamp).toLocaleTimeString()}</td></tr>
-                    </table>
-                    ${routePanel}
-                </div>`);
+
+            // While the popup is open, patch values in place. Calling
+            // setPopupContent here would destroy the destination input the user
+            // is typing into — this runs once a second.
+            const patched = marker.isPopupOpen()
+                && patchOpenPopup(id, det, color, isHeavy, hasIncident);
+            if (!patched) {
+                marker.setPopupContent(
+                    popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng)
+                );
+            }
         }
 
         if (loc) heatPoints.push([loc.coords[0], loc.coords[1], Math.min(det.vehicle_count / 35, 1.0)]);
@@ -858,8 +946,23 @@ function timeAgo(ts) {
 
 // ── Route suggestion ──────────────────────────────────────────────────────────
 function openRoute(cameraId, lat, lng) {
-    const dest = document.getElementById(`routeDest_${cameraId}`)?.value?.trim();
-    if (!dest) return;
+    const input = document.getElementById(`routeDest_${cameraId}`);
+    // Fall back to the cache in case the popup was re-rendered between the
+    // user typing and the click landing.
+    const dest = (input?.value ?? routeDestCache[cameraId] ?? '').trim();
+    if (!dest) {
+        // Silently returning here looked like a broken button.
+        input?.focus();
+        if (input) {
+            input.placeholder = 'Enter a destination first…';
+            input.style.borderColor = '#e94560';
+            setTimeout(() => {
+                input.placeholder = 'Enter destination…';
+                input.style.borderColor = '#ddd';
+            }, 2000);
+        }
+        return;
+    }
     window.open(
         `https://www.google.com/maps/dir/?api=1&origin=${lat},${lng}&destination=${encodeURIComponent(dest)}&avoid=congestion`,
         '_blank'
