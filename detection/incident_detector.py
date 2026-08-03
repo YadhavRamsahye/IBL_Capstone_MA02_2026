@@ -1,33 +1,7 @@
 """
-detection/incident_detector.py
-Analyses a rolling window of vehicle-count readings per camera to
-detect traffic incidents without additional hardware.
-
-Incident Types
---------------
-sudden_congestion    — count spikes ≥10 vehicles in one reading cycle
-sustained_bottleneck — bottleneck severity for 3+ consecutive readings
-road_blockage        — count drops from ≥15 to ≤2 in one reading cycle
-rapid_buildup        — 4+ consecutive readings each rising ≥2 vehicles,
-                       ending in heavy or bottleneck
-camera_freeze        — no update received for FREEZE_TIMEOUT_SECS seconds
-                       (raised externally by the watchdog)
-
-Public API
-----------
-    detector = IncidentDetector()
-
-    # Call after every detection result:
-    new_incidents = detector.analyze(camera_id, vehicle_count, severity)
-
-    # Query state:
-    detector.get_active_incidents()       -> list[dict]  (unresolved)
-    detector.get_all_incidents(limit=100) -> list[dict]
-    detector.get_incidents_by_camera(id)  -> list[dict]
-
-    # Camera-freeze helpers (called by the watchdog in main.py):
-    detector.mark_camera_freeze(camera_id)
-    detector.resolve_camera_freeze(camera_id)
+Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations

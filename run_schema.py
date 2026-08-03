@@ -2,6 +2,10 @@
 run_schema.py
 Create the TrafficSystem database and apply schema.sql to it.
 
+Author : Mokshan Mehess (22703417) — Document Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System
+
 This script used to carry its own inline copy of the DDL, which had drifted from
 schema.sql — different column names, different quoting — so the schema you ended
 up with depended on which file you ran. schema.sql is now the only definition

@@ -2,6 +2,10 @@
 seed_users.py
 Create the initial administrator account.
 
+Author : Mokshan Mehess (22703417) — Document Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System
+
 Changes from the previous version:
   * Credentials come from the environment, not a hardcoded literal — the
     database password was previously committed to source.

@@ -1,5 +1,9 @@
 -- schema.sql — authoritative schema for the TrafficSystem database.
 --
+-- Author: Whitney Ramsamy (22387675) — Team Leader
+-- Unit  : ISAD3000 Capstone Computing Project 1
+-- Team  : IBL Group — Traffic Bottleneck Detection System
+--
 -- This file is the single definition of the schema. run_schema.py creates the
 -- database and then executes this file; it no longer carries its own copy of
 -- the DDL. Previously the two disagreed — schema.sql declared
@@ -13,6 +17,10 @@
 -- accident. Keeping everything lowercase removes that whole class of bug.
 --
 -- Usage:  python run_schema.py
+--
+-- Note: CREATE DATABASE is deliberately not here. It cannot run inside a
+-- transaction or alongside other statements, so run_schema.py creates the
+-- database on a separate connection before applying this file.
 
 -- ── Enums ────────────────────────────────────────────────────────────────────
 DO $$ BEGIN

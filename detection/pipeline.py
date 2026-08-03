@@ -1,4 +1,8 @@
-
+"""
+Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+"""
 
 from __future__ import annotations
 
@@ -113,23 +117,7 @@ def run_pipeline(
     camera_id: str,
     source: str,
 ) -> Generator[dict, None, None]:
-    """
-    Run the vehicle detection pipeline and yield result dicts continuously.
 
-    Parameters
-    ----------
-    camera_id : str
-        Identifier for this camera / feed (included in every result dict).
-    source : str
-        RTSP stream URL  e.g. ``"rtsp://192.168.1.10:554/stream"``
-        or local video path e.g. ``"data/sample.mp4"``.
-
-    Yields
-    ------
-    dict
-        Keys: camera_id, timestamp, vehicle_count, severity, color,
-              fps_processed, frame_shape.
-    """
     logger.info("[%s] Loading YOLOv8 model from %r …", camera_id, MODEL_PATH)
     model = YOLO(MODEL_PATH)
 

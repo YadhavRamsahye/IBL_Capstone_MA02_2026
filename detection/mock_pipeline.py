@@ -1,4 +1,8 @@
-
+"""
+Author : Yadhav Sharma Ramsahye (22108355) — Scrum Master
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System
+"""
 from __future__ import annotations
 
 import logging
@@ -82,21 +86,7 @@ def run_mock_pipeline(
     camera_id: str = "mock_cam",
     frame_shape: list[int] | None = None,
 ) -> Generator[dict, None, None]:
-    """
-    Simulate the real pipeline output with smoothly varying vehicle counts.
 
-    Parameters
-    ----------
-    camera_id : str
-        Identifier included in every result dict.
-    frame_shape : list[int] | None
-        [height, width] to report. Defaults to 720 × 1280.
-
-    Yields
-    ------
-    dict
-        Same schema as ``detection.pipeline.run_pipeline``.
-    """
     if frame_shape is None:
         frame_shape = MOCK_FRAME_SHAPE
 
