@@ -97,6 +97,21 @@ _BREAKER_COOLDOWN: float = 300.0  # seconds before a single probe is allowed
 _NON_RETRYABLE_STATUS: frozenset[int] = frozenset({400, 401, 403, 404, 422})
 
 
+def _api_usable() -> bool:
+    """Return False when calling the API cannot possibly work or is switched off.
+
+    Adopted from the parallel implementation on main: checking these up front
+    avoids a pointless request and a confusing traceback when the key is simply
+    absent, and CLAUDE_API_DISABLED gives demos a hard kill switch that forces
+    template summaries without editing code.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return False
+    if os.environ.get("CLAUDE_API_DISABLED", "").strip() == "1":
+        return False
+    return True
+
+
 def _is_retryable(exc: Exception) -> bool:
     """Return ``True`` if retrying ``exc`` could plausibly succeed.
 
@@ -442,6 +457,11 @@ class TrafficSummaryService:
           ``_BREAKER_COOLDOWN`` seconds, after which a single probe is allowed
           through.  One success closes the circuit.
         """
+        # No key, or explicitly disabled — go straight to the template without
+        # opening a client or burning a retry cycle.
+        if not _api_usable():
+            return self._fallback(data, prompt_type)
+
         if self._breaker_is_open():
             return self._fallback(data, prompt_type)
 
