@@ -20,3 +20,9 @@ numpy
 imageio-ffmpeg
 anthropic
 python-dotenv
+
+# Database layer: main.py imports sqlalchemy directly, database.py connects
+# through the asyncpg driver, and seed_users.py hashes passwords with bcrypt.
+sqlalchemy[asyncio]==2.0.51
+asyncpg==0.31.0
+bcrypt==5.0.0
