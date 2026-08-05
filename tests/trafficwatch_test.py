@@ -1,16 +1,7 @@
 """
-detection/trafficwatch_test.py
-Standalone test script for MYT Traffic Watch camera discovery + HLS frame grab.
-
-Usage:
-    python detection/trafficwatch_test.py
-
-Checks:
-  1. ffmpeg / ffprobe installation and version
-  2. Camera discovery via discover_cameras()
-  3. ffprobe validation result per camera
-  4. One-frame grab from the first validated camera
-  5. Formatted summary
+Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations

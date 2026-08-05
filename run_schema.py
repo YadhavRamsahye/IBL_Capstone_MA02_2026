@@ -1,3 +1,9 @@
+"""
+Author : Mokshan Mehess (22703417) — Document Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System
+"""
+
 # run_schema.py
 import asyncio
 import asyncpg

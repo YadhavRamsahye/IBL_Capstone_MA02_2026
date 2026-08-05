@@ -1,3 +1,9 @@
+"""
+Author : Sahil Singh Rughoo (22414560) — Tech Lead / Yadhav Sharma Ramsahye (22108355) — Developer 
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -266,6 +272,7 @@ async def _hls_camera_loop(
     camera_id: str,
     source: str,
     url_candidates: list[str] | None = None,
+    startup_delay: float = 0.0,
 ) -> None:
     """
     Drive the HLS pipeline for one camera with persistent retry.
@@ -278,8 +285,20 @@ async def _hls_camera_loop(
 
     url_candidates, if provided, are tried in order on each frame grab so that
     a single failing URL does not abort the entire detection cycle.
+
+    startup_delay, if > 0, causes the task to sleep before its first HLS attempt
+    so that multiple cameras do not hammer the Wowza server simultaneously.
+    The delay lives here (inside the task) rather than in the lifespan startup
+    phase so that a CancelledError during the sleep is handled gracefully and
+    does not tear down the entire lifespan before it reaches ``yield``.
     """
     hls_urls = url_candidates or [source]
+    if startup_delay > 0:
+        logger.info(
+            "[%s] HLS task staggered — waiting %.0fs before first attempt …",
+            camera_id, startup_delay,
+        )
+        await asyncio.sleep(startup_delay)
     logger.info("[%s] HLS detection task started  urls=%s", camera_id, hls_urls)
     outer_attempt = 0
 
@@ -435,18 +454,18 @@ async def lifespan(app: FastAPI):
         if src == "mock":
             coro = _camera_loop(cam["camera_id"])
         elif src.endswith(".m3u8"):
-            coro = _hls_camera_loop(cam["camera_id"], src, cam.get("url_candidates"))
+            # Stagger HLS cameras by 5 s each to avoid simultaneous network
+            # hits on the Wowza server.  The delay is passed into the coroutine
+            # so it sleeps INSIDE the task, not inside the lifespan startup phase
+            # (sleeping here before yield risks a CancelledError from StatReload
+            # or OneDrive aborting the entire lifespan before it reaches yield).
+            coro = _hls_camera_loop(
+                cam["camera_id"], src,
+                cam.get("url_candidates"),
+                startup_delay=float(5 * i),
+            )
         else:
             coro = _real_camera_loop(cam["camera_id"], src)
-
-        # Stagger HLS camera startup by 5 s each to avoid simultaneous
-        # network hits on the Wowza server (fix 2).
-        if src.endswith(".m3u8") and i > 0:
-            logger.info(
-                "Staggering camera %s startup by %ds …",
-                cam["camera_id"], 5 * i,
-            )
-            await asyncio.sleep(5)
 
         task = asyncio.create_task(coro, name=f"camera_{cam['camera_id']}")
         tasks.append(task)
@@ -796,4 +815,11 @@ async def analytics_page(request: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True) 
+    # reload=False is intentional — StatReload + OneDrive causes spurious
+    # reloads that cancel the lifespan mid-startup.  Use the explicit
+    # uvicorn CLI if you need hot-reload during development:
+    #   python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    # For demos and normal runs, just do:
+    #   python main.py        (or)
+    #   python -m uvicorn main:app --host 0.0.0.0 --port 8000
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False) 

@@ -1,17 +1,7 @@
 """
-database.py  (project root)
-Async SQLAlchemy engine + session factory.
-All DB credentials can be overridden via environment variables so no
-code change is needed between local dev and production.
-
-Graceful degradation
---------------------
-A quick TCP probe is run at import time.  If PostgreSQL is unreachable
-(port closed, server down, wrong host) the module sets DB_AVAILABLE=False
-and logs a single clear warning — no exception is raised and the app
-starts normally on mock data.  The rest of the codebase checks
-DB_AVAILABLE before opening sessions, so no DB call is ever attempted
-when the server is unavailable.
+Author : Mokshan Mehess (22703417) — Document Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System
 """
 
 from __future__ import annotations

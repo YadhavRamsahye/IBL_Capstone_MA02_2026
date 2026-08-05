@@ -1,22 +1,7 @@
 """
-detection/hls_pipeline.py
-HLS stream pipeline for MYT Traffic Watch cameras.
-
-Strategy: reconnect-per-frame
--------------------------------
-Instead of holding one long-lived FFmpeg pipe (which Wowza drops after a short
-time), a fresh FFmpeg subprocess is spawned for every single frame grab.  The
-process opens the HLS playlist, decodes exactly one frame, writes it to stdout,
-and exits.  The detection loop then sleeps for the frame interval and repeats.
-
-This approach is slightly slower to start each frame but avoids all connection-
-drop issues that plague persistent pipe connections to Wowza servers.
-
-Public API
-----------
-    run_hls_pipeline(camera_id: str, hls_url: str) -> Generator[dict]
-
-The result dict schema is identical to detection/pipeline.py.
+Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
@@ -263,24 +248,7 @@ def run_hls_pipeline(
     camera_id: str,
     hls_urls: list[str],
 ) -> Generator[dict, None, None]:
-    """
-    Grab frames one-at-a-time from HLS stream(s), run YOLOv8, yield result dicts.
 
-    Each frame is fetched via a fresh ffmpeg subprocess (reconnect-per-frame
-    strategy) to avoid Wowza connection-drop issues.  Multiple URLs may be
-    supplied; _grab_single_frame tries them in order on each grab attempt.
-    The generator exhausts after MAX_RETRIES consecutive detection-loop failures;
-    the caller (_hls_camera_loop in main.py) handles further retry / mock fallback.
-
-    Parameters
-    ----------
-    camera_id : str
-    hls_urls  : list[str]   One or more .m3u8 URLs tried in order per frame grab.
-
-    Yields
-    ------
-    dict  Same schema as detection.pipeline.run_pipeline.
-    """
     if not _ffmpeg_available():
         logger.error(
             "[%s] ffmpeg not found on PATH — cannot run HLS pipeline.\n"

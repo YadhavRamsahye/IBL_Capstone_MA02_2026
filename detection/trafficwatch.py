@@ -1,23 +1,7 @@
 """
-detection/trafficwatch.py
-Hardcoded MYT Traffic Watch camera list with ffprobe-based validation.
-
-Stream source: https://www.myt.mu/sinformer/trafficwatch/
-Wowza Streaming Engine — HLS (.m3u8) format.
-
-Public API
-----------
-    discover_cameras() -> list[dict]
-
-Each returned dict has the shape:
-    {
-        "camera_id":   str,
-        "name":        str,
-        "source":      str,   # validated playlist.m3u8 URL
-        "stream_base": str,   # stable base URL without filename
-        "origin":      str,
-        "validated":   bool,
-    }
+Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Unit   : ISAD3000 Capstone Computing Project 1
+Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
@@ -207,18 +191,7 @@ def _resolve_source(
     ffprobe_ok: bool,
     scraped: dict[str, str] | None = None,
 ) -> tuple[str, bool]:
-    """
-    Try candidate URLs in priority order until one validates.
-    Returns (source_url, validated).
 
-    Candidate order:
-      1. {stream_base}/playlist.m3u8
-      2. {stream_base}/chunklist.m3u8
-      3. _chunklist_fallback (hardcoded rotating ID)
-      4. scraped URL from MYT page (if available)
-
-    If ffprobe is unavailable, returns the best available URL unvalidated.
-    """
     # Fast path: camera has a known-good URL — skip all probing.
     if "source_override" in cam:
         url = cam["source_override"]
