@@ -101,6 +101,26 @@ _JITTER_FACTOR: float = 0.25      # +-25% randomness on delay
 _BREAKER_THRESHOLD: int = 5
 _BREAKER_COOLDOWN: float = 300.0  # seconds before a single probe is allowed
 
+# ---------------------------------------------------------------------------
+# Daily call budget
+# ---------------------------------------------------------------------------
+# Gemini's free tier grants 20 generate_content requests *per day* per model.
+# With 38 cameras the per-camera cooldowns alone would issue hundreds of calls
+# an hour, so the quota is gone within minutes and every later summary falls
+# back to a template anyway.
+#
+# Rather than spend the budget on whichever camera happens to ask first, cap
+# total calls per day and spend them only where a written summary carries
+# information a template does not: congested cameras. Free-flowing roads get
+# the template, which says the same thing at no cost.
+#
+# Set SUMMARY_DAILY_BUDGET=0 for unlimited (paid tiers).
+_DAILY_BUDGET: int = int(os.getenv("SUMMARY_DAILY_BUDGET", "20"))
+
+# Severities worth spending budget on. A template already conveys
+# "free-flowing with 3 vehicles" perfectly well.
+_BUDGET_SEVERITIES: frozenset[str] = frozenset({"heavy", "bottleneck"})
+
 
 
 def _api_usable() -> bool:
@@ -384,6 +404,14 @@ class TrafficSummaryService:
         self._breaker_open_until: float = 0.0
         # Guards against every camera logging the same "circuit open" message.
         self._breaker_logged: bool = False
+        # Daily budget accounting: (UTC date, calls spent today).
+        self._budget_day: Optional[str] = None
+        self._budget_used: int = 0
+        self._budget_logged: bool = False
+        # Serialises the breaker's half-open probe. With 38 cameras the
+        # check-then-call was not atomic, so a cooldown expiry let a dozen
+        # tasks through at once instead of one.
+        self._probe_lock = asyncio.Lock()
 
     # -- Public methods -----------------------------------------------------
 
@@ -452,6 +480,9 @@ class TrafficSummaryService:
         if not _api_usable():
             return self._fallback(data, prompt_type)
 
+        if not self._budget_allows(data):
+            return self._fallback(data, prompt_type)
+
         if self._breaker_is_open():
             return self._fallback(data, prompt_type)
 
@@ -508,6 +539,51 @@ class TrafficSummaryService:
         self._maybe_open_breaker()
         return self._fallback(data, prompt_type)
 
+    # -- Daily budget -------------------------------------------------------
+
+    def _budget_allows(self, data: DetectionData) -> bool:
+        """Whether this detection is worth a call from the daily quota.
+
+        Free tiers are metered per day, so the budget has to be rationed
+        deliberately or the first minutes of a run consume all of it.
+        """
+        if _DAILY_BUDGET <= 0:
+            return True                       # unlimited (paid tier)
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        if self._budget_day != today:
+            self._budget_day = today
+            self._budget_used = 0
+            self._budget_logged = False
+
+        if data.severity not in _BUDGET_SEVERITIES:
+            # A template states "free-flowing, 3 vehicles" just as well.
+            return False
+
+        if self._budget_used >= _DAILY_BUDGET:
+            if not self._budget_logged:
+                logger.info(
+                    "Daily %s budget of %d call(s) is spent — template summaries "
+                    "for the rest of today. Raise SUMMARY_DAILY_BUDGET if your "
+                    "plan allows more.",
+                    providers.active_provider(), _DAILY_BUDGET,
+                )
+                self._budget_logged = True
+            return False
+
+        self._budget_used += 1
+        return True
+
+    def budget_status(self) -> dict:
+        """Remaining daily allowance, for diagnostics and /api/status."""
+        return {
+            "limit":     _DAILY_BUDGET,
+            "used":      self._budget_used,
+            "remaining": max(0, _DAILY_BUDGET - self._budget_used) if _DAILY_BUDGET else None,
+            "day":       self._budget_day,
+            "spent_on":  sorted(_BUDGET_SEVERITIES),
+        }
+
     # -- Circuit breaker ----------------------------------------------------
 
     def _breaker_is_open(self) -> bool:
@@ -537,9 +613,9 @@ class TrafficSummaryService:
         self._breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN
         if not self._breaker_logged:
             logger.warning(
-                providers.active_provider(),
                 "%s API circuit OPEN after %d consecutive failures — "
                 "using template summaries for the next %.0fs.",
+                providers.active_provider(),
                 self._consecutive_failures,
                 _BREAKER_COOLDOWN,
             )

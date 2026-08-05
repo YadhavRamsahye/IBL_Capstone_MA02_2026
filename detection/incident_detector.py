@@ -283,9 +283,14 @@ class IncidentDetector:
             confidence    = confidence,
             vehicle_count = r.count,
             description   = (
-                f"Sudden congestion at {_display(camera_id)}: vehicle count jumped "
-                f"from {hist[-1].count} to {r.count} (+{spike}) in one detection cycle. "
-                f"Possible accident or road obstruction ahead."
+                # Reports the rolling-median baseline, not hist[-1]. The check
+                # was changed to measure against the median (so it survives
+                # confirmation across readings), but this text still quoted the
+                # previous reading — which by then equals the current one, so
+                # it read "jumped from 26 to 26 (+8)".
+                f"Sudden congestion at {_display(camera_id)}: vehicle count rose "
+                f"to {r.count}, {spike:.0f} above the recent average of "
+                f"{baseline:.0f}. Possible accident or road obstruction ahead."
             ),
         )
 

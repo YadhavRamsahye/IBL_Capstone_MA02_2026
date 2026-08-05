@@ -110,6 +110,23 @@ _last_summary_time: dict[str, float] = {}
 connected_clients: set = set()
 
 
+def _as_datetime(value) -> datetime:
+    """Coerce an ISO-8601 string to a timezone-aware datetime for asyncpg.
+
+    asyncpg binds TIMESTAMPTZ parameters strictly — it rejects strings rather
+    than parsing them — so anything crossing into a timestamp column has to be
+    converted here.
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        logger.warning("Unparseable timestamp %r — using current time.", value)
+        return datetime.now(timezone.utc)
+
+
 def _live_severity() -> dict[str, str]:
     """Current severity of every camera, for validating detour suggestions.
 
@@ -238,7 +255,10 @@ async def _save_incident(inc) -> None:
                 "severity":      inc.severity,
                 "confidence":    inc.confidence,
                 "vehicle_count": inc.vehicle_count,
-                "detected_at":   inc.timestamp,
+                # Incident.timestamp is an ISO-8601 *string*; detected_at is
+                # TIMESTAMPTZ and asyncpg requires a real datetime, so parse it.
+                # The other two save helpers use SQL NOW() and so were unaffected.
+                "detected_at":   _as_datetime(inc.timestamp),
                 "description":   inc.description,
             })
             await db.commit()

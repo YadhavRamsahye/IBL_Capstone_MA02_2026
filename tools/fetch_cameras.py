@@ -138,7 +138,17 @@ def scrape() -> list[dict]:
     return cameras
 
 
+# Radius of the ring that separates cameras sharing a region centroid.
+# ~0.0035 degrees is roughly 390 m at Mauritius' latitude — inside the town the
+# camera is named for, so the marker still means "in this region" and nothing
+# more precise. Without it six Curepipe cameras land on one pixel and the map
+# shows 12 markers for 38 cameras.
+RING_RADIUS_DEG = 0.0035
+
+
 def attach_coords(cameras: list[dict]) -> None:
+    import math
+
     for cam in cameras:
         if cam["camera_id"] in KNOWN_COORDS:
             cam["lat"], cam["lng"] = KNOWN_COORDS[cam["camera_id"]]
@@ -146,6 +156,25 @@ def attach_coords(cameras: list[dict]) -> None:
         else:
             cam["lat"], cam["lng"] = REGION_CENTRES.get(cam["region"], FALLBACK_CENTRE)
             cam["coords_precision"] = "approximate"
+
+    # Spread each region's approximate cameras evenly around its centroid so
+    # every one is separately visible and clickable. Deterministic, so
+    # regenerating the catalogue does not shuffle the map.
+    by_region: dict[str, list[dict]] = {}
+    for cam in cameras:
+        if cam["coords_precision"] == "approximate":
+            by_region.setdefault(cam["region"], []).append(cam)
+
+    for region, group in by_region.items():
+        if len(group) < 2:
+            continue
+        clat, clng = REGION_CENTRES.get(region, FALLBACK_CENTRE)
+        # Longitude degrees shrink with latitude; correct so the ring is round.
+        lng_scale = 1.0 / max(0.2, math.cos(math.radians(clat)))
+        for i, cam in enumerate(sorted(group, key=lambda c: c["camera_id"])):
+            angle = 2 * math.pi * i / len(group)
+            cam["lat"] = round(clat + RING_RADIUS_DEG * math.sin(angle), 6)
+            cam["lng"] = round(clng + RING_RADIUS_DEG * math.cos(angle) * lng_scale, 6)
 
 
 def render(cameras: list[dict]) -> str:
