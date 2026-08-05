@@ -29,4 +29,5 @@ webdriver-manager
 numpy
 imageio-ffmpeg
 anthropic
+google-genai      # Gemini backend (SUMMARY_PROVIDER=gemini)
 python-dotenv

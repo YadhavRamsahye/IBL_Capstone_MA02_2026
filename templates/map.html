@@ -494,9 +494,10 @@ Module   : Dashboard UI / Templates
     <!-- Map -->
     <div class="map-wrapper">
         <div class="map-info-bar" id="infoBar">
-            Viewing: <strong>Port Louis City Centre</strong> &nbsp;|&nbsp;
+            Viewing: <strong>Mauritius &mdash; MYT Traffic Watch</strong> &nbsp;|&nbsp;
             AI Detection: <span class="live">● Live</span> &nbsp;|&nbsp;
-            Cameras: <strong id="infoActiveCams">—</strong> &nbsp;|&nbsp;
+            Cameras: <strong id="infoActiveCams">—</strong>
+            <span id="cameraCoverage" style="opacity:.55;font-size:11px;"></span> &nbsp;|&nbsp;
             Vehicles: <strong id="infoVehicles">—</strong>
         </div>
         <div id="map"></div>
@@ -606,18 +607,57 @@ async function fetchCameras() {
                 if (cam.lat == null || cam.lng == null) continue;
                 const existing = CAMERA_LOCS[cam.camera_id];
                 CAMERA_LOCS[cam.camera_id] = {
-                    coords: [cam.lat, cam.lng],
-                    name:   cam.name || existing?.name || cam.camera_id,
-                    label:  cam.name || existing?.label || cam.camera_id,
+                    coords:    [cam.lat, cam.lng],
+                    name:      cam.name || existing?.name || cam.camera_id,
+                    label:     cam.name || existing?.label || cam.camera_id,
+                    region:    cam.region || '',
+                    // false = in MYT's catalogue but detection is not running
+                    // on it (see ACTIVE_CAMERAS). No data will ever arrive.
+                    monitored: cam.monitored !== false,
+                    // 'approximate' = placed at its region centroid because
+                    // MYT publishes no coordinates.
+                    precision: cam.coords_precision || 'exact',
                 };
             }
         }
     } catch (_) {}
+
+    let monitored = 0, catalogued = 0;
     for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
         if (cameraMarkers[id]) continue;
-        cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
-            .addTo(map)
-            .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
+
+        if (loc.monitored === false) {
+            catalogued++;
+            // Deliberately a different shape and muted styling: these markers
+            // must not read as live cameras with a "free traffic" green dot.
+            cameraMarkers[id] = L.circleMarker(loc.coords, {
+                radius: 5, color: '#8b949e', weight: 1.5,
+                fillColor: '#30363d', fillOpacity: 0.55, dashArray: '2,2',
+            }).addTo(map).bindPopup(
+                `<div style="min-width:190px;font-family:Segoe UI,sans-serif;">
+                   <div style="font-size:14px;font-weight:700;">${loc.label}</div>
+                   <div style="font-size:11px;color:#888;margin-bottom:6px;">${loc.region}</div>
+                   <div style="font-size:12px;color:#555;">
+                     Camera published by MYT but not currently monitored.
+                   </div>
+                   <div style="font-size:11px;color:#888;margin-top:6px;">
+                     Add <code>${id}</code> to ACTIVE_CAMERAS to run detection on it.
+                   </div>
+                   ${loc.precision === 'approximate' ? `<div style="font-size:11px;color:#b8860b;margin-top:6px;">
+                     Approximate position — shown at region centre.</div>` : ''}
+                 </div>`);
+        } else {
+            monitored++;
+            cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
+                .addTo(map)
+                .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
+        }
+    }
+    const note = document.getElementById('cameraCoverage');
+    if (note) {
+        note.textContent = catalogued
+            ? `${monitored} monitored · ${catalogued} catalogued`
+            : `${monitored} monitored`;
     }
 }
 
@@ -650,6 +690,26 @@ function routePanelHtml(id, lat, lng) {
         </div>`;
 }
 
+// Per-direction rows. A two-way road where one side is blocked and the other
+// is clear cannot be described by a single severity, so both are shown; an
+// uncalibrated camera reports only "combined" and this renders nothing.
+function directionRowsHtml(det) {
+    const dirs = det.directions || {};
+    const labels = Object.keys(dirs).filter(l => l !== 'combined');
+    if (!labels.length) return '';
+    const rows = labels.sort().map(l => {
+        const d = dirs[l];
+        const name = l.charAt(0).toUpperCase() + l.slice(1);
+        return `<tr><td style="padding-right:8px;">${escAttr(name)}</td>
+                    <td style="color:${d.color};font-weight:600;">${escAttr(d.severity)}</td>
+                    <td style="text-align:right;">${d.vehicle_count}</td></tr>`;
+    }).join('');
+    return `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;">
+        <div style="font-size:11px;color:#888;font-weight:600;margin-bottom:4px;">↕ By direction</div>
+        <table style="font-size:12px;color:#555;width:100%;">${rows}</table>
+    </div>`;
+}
+
 // Single source of truth for the badge — it is rendered from two places.
 function incidentBadgeHtml(det) {
     if (det.possible_incident !== true) return '';
@@ -671,6 +731,7 @@ function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
                 <tr><td>FPS</td><td id="popFps_${id}">${det.fps_processed?.toFixed(2) ?? '—'}</td></tr>
                 <tr><td>Updated</td><td id="popUpd_${id}">${new Date(det.timestamp).toLocaleTimeString()}</td></tr>
             </table>
+            <div id="popDirs_${id}">${directionRowsHtml(det)}</div>
             ${isHeavy ? routePanelHtml(id, lat, lng) : ''}
         </div>`;
 }
@@ -692,6 +753,8 @@ function patchOpenPopup(id, det, color, isHeavy, hasIncident) {
     document.getElementById(`popUpd_${id}`).textContent = new Date(det.timestamp).toLocaleTimeString();
     const badge = document.getElementById(`popBadge_${id}`);
     if (badge) badge.innerHTML = incidentBadgeHtml(det);
+    const dirs = document.getElementById(`popDirs_${id}`);
+    if (dirs) dirs.innerHTML = directionRowsHtml(det);
     return true;
 }
 

@@ -8,60 +8,74 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 import time
 
+from detection.camera_catalogue import CAMERAS as CATALOGUE
+
 logger = logging.getLogger(__name__)
 
-# ── Hardcoded camera catalogue ────────────────────────────────────────────────
-# Use stable playlist.m3u8 paths; chunklist URLs rotate and should only be
-# tried as a last-resort fallback.
 
-MYT_CAMERAS: list[dict] = [
-    {
-        "camera_id":   "caudan_north",
-        "name":        "Caudan North — Port Louis",
-        "lat":         -20.1626,
-        "lng":          57.4939,
-        "stream_base": "https://stream.myt.mu/rh/prod/CAUDAN_NORTH.stream_720p",
-        "origin":      "myt.trafficwatch",
-        "_chunklist_fallback": "https://stream.myt.mu/rh/prod/CAUDAN_NORTH.stream_720p/chunklist_w998681874.m3u8",
-    },
-    {
-        "camera_id":   "caudan_south",
-        "name":        "Caudan South — Port Louis",
-        "lat":         -20.1640,
-        "lng":          57.4945,
-        "stream_base": "https://stream.myt.mu/prod/CAUDAN_SOUTH.stream_720p",
-        "origin":      "myt.trafficwatch",
-        "_chunklist_fallback": "https://stream.myt.mu/prod/CAUDAN_SOUTH.stream_720p/chunklist_w674657069.m3u8",
-    },
-    {
-        "camera_id":       "la_chaussee",
-        "name":            "La Chaussee Street — Port Louis",
-        "lat":             -20.1608,
-        "lng":              57.4972,
-        "stream_base":     "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p",
-        "source_override": "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist.m3u8",
-        "url_candidates": [
-            "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist.m3u8",
-            "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/playlist.m3u8",
-            "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist_w228974167.m3u8",
-        ],
-        "origin":          "myt.trafficwatch",
-        "_chunklist_fallback": "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist_w228974167.m3u8",
-    },
-    {
-        "camera_id":   "casernes",
-        "name":        "Casernes / Brabant Street — Port Louis",
-        "lat":         -20.1590,
-        "lng":          57.4960,
-        "stream_base": "https://stream.myt.mu/prod/CASERNES_BRABANT_STREET.stream_720p",
-        "origin":      "myt.trafficwatch",
-        "_chunklist_fallback": "https://stream.myt.mu/prod/CASERNES_BRABANT_STREET.stream_720p/chunklist_w1553997703.m3u8",
-    },
-]
+def _active_camera_ids() -> set[str] | None:
+    """Camera ids to actually run detection on, or None for all.
+
+    MYT publishes 38 cameras but each one costs an ffmpeg subprocess plus a
+    YOLOv8m inference every FRAME_INTERVAL seconds. On CPU-only inference,
+    running all of them saturates the machine and produces *worse* data than a
+    handful — frame grabs start timing out. So the catalogue is complete while
+    what gets processed is capped, and the cap is configuration rather than a
+    code edit:
+
+        ACTIVE_CAMERAS=caudan_north,caudan_south      # explicit list
+        ACTIVE_CAMERAS=all                            # everything (needs a GPU)
+
+    Unset defaults to DEFAULT_ACTIVE below.
+    """
+    raw = os.environ.get("ACTIVE_CAMERAS", "").strip()
+    if not raw:
+        return set(DEFAULT_ACTIVE)
+    if raw.lower() == "all":
+        return None
+    return {c.strip() for c in raw.split(",") if c.strip()}
+
+
+# Detection defaults to the four cameras with hand-verified coordinates and
+# calibrated capacities — the set this project has actually been validated on.
+DEFAULT_ACTIVE: tuple[str, ...] = (
+    "caudan_north", "caudan_south", "la_chaussee", "casernes",
+)
+
+# ── Camera catalogue ──────────────────────────────────────────────────────────
+# The full island-wide list lives in detection/camera_catalogue.py, generated
+# from MYT's page by tools/fetch_cameras.py. This module previously carried four
+# hand-written entries covering only central Port Louis.
+#
+# MYT_CAMERAS is the subset detection actually runs on — see _active_camera_ids.
+# CAUDAN_NORTH is served from /rh/prod rather than /prod; the catalogue records
+# each camera's real sourceURL so that stays correct without a special case here.
+
+def _build_active() -> list[dict]:
+    wanted = _active_camera_ids()
+    cams = [dict(c) for c in CATALOGUE
+            if wanted is None or c["camera_id"] in wanted]
+    for cam in cams:
+        # discover_cameras() probes stream_base + a URL suffix; the catalogue
+        # stores the full playlist URL, so derive the base from it.
+        cam["stream_base"] = re.sub(r"/[^/]+\.m3u8$", "", cam["source"])
+    if wanted is not None:
+        missing = wanted - {c["camera_id"] for c in cams}
+        if missing:
+            logger.warning(
+                "[trafficwatch] ACTIVE_CAMERAS names unknown camera(s): %s. "
+                "Known ids are in detection/camera_catalogue.py.",
+                ", ".join(sorted(missing)),
+            )
+    return cams
+
+
+MYT_CAMERAS: list[dict] = _build_active()
 
 FALLBACK_CAMERAS: list[dict] = [
     {
@@ -123,11 +137,13 @@ def _scrape_live_urls() -> dict[str, str]:
     logger.info("[trafficwatch] Found %d .m3u8 URL(s) on MYT page.", len(raw_urls))
 
     # Match scraped URLs to known camera IDs by stream name keywords
+    # Derived from the catalogue so every camera can be matched, not just the
+    # four this map used to hardcode.
     keyword_map = {
-        "CAUDAN_NORTH":          "caudan_north",
-        "CAUDAN_SOUTH":          "caudan_south",
-        "LA_CHAUSSEE":           "la_chaussee",
-        "CASERNES":              "casernes",
+        re.search(r"/([A-Za-z0-9_]+)\.stream", c["source"]).group(1).upper():
+            c["camera_id"]
+        for c in MYT_CAMERAS
+        if re.search(r"/([A-Za-z0-9_]+)\.stream", c["source"])
     }
     matched: dict[str, str] = {}
     for url in raw_urls:

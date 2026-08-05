@@ -1,11 +1,16 @@
 """
 detection/claude_api.py
-AI-powered traffic summary generation using the Anthropic Claude API.
+AI-powered traffic summary generation.
+
+Despite the file name this is no longer Anthropic-specific: the backend is
+chosen by SUMMARY_PROVIDER (template | gemini | anthropic) and the vendor code
+lives in detection/providers.py. The name is kept so existing imports and the
+test suite continue to work; rename it when convenient.
 
 This module provides the ``TrafficSummaryService`` class, which:
   - Accepts detection data from the YOLO/OpenCV pipeline (or mock).
-  - Calls the Claude API (async) to generate human-readable traffic summaries.
-  - Falls back to template-based summaries when the API is unavailable.
+  - Calls the configured provider (async) for human-readable summaries.
+  - Falls back to template-based summaries when no provider is available.
   - Caches the last successful summary per camera for resilience.
   - Uses exponential backoff on transient failures (SRS Section 5.2.8).
 
@@ -23,6 +28,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
+
+from detection import providers
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +53,9 @@ class DetectionData:
     # conditions before it is recommended. Optional: absent means "unknown",
     # in which case the static suggestion is used unchanged.
     live_severity: Optional[dict] = None
+    # Per-direction breakdown from the pipeline, when the camera is
+    # calibrated; {} or {'combined': ...} for a single-figure camera.
+    directions: Optional[dict] = None
 
     @classmethod
     def from_dict(cls, data: dict, live_severity: Optional[dict] = None) -> "DetectionData":
@@ -59,6 +69,7 @@ class DetectionData:
             fps_processed=data.get("fps_processed", 0.0),
             frame_shape=data.get("frame_shape", [720, 1280]),
             live_severity=live_severity,
+            directions=data.get("directions") or {},
         )
 
 
@@ -71,7 +82,7 @@ class TrafficSummary:
     severity: str
     vehicle_count: int
     timestamp: str         # when the summary was generated
-    source: str            # "claude_api" | "template_fallback"
+    source: str            # provider name (e.g. "gemini") | "template_fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -90,45 +101,38 @@ _JITTER_FACTOR: float = 0.25      # +-25% randomness on delay
 _BREAKER_THRESHOLD: int = 5
 _BREAKER_COOLDOWN: float = 300.0  # seconds before a single probe is allowed
 
-# HTTP status codes that can never succeed on retry.  These are client-side
-# errors (bad request, auth, exhausted credit, missing model) — retrying only
-# wastes time and floods the log.  429 and 5xx are excluded: those are genuinely
-# transient and remain eligible for backoff.
-_NON_RETRYABLE_STATUS: frozenset[int] = frozenset({400, 401, 403, 404, 422})
 
 
 def _api_usable() -> bool:
-    """Return False when calling the API cannot possibly work or is switched off.
+    """Return False when calling a provider cannot work or is switched off.
 
-    Adopted from the parallel implementation on main: checking these up front
-    avoids a pointless request and a confusing traceback when the key is simply
-    absent, and CLAUDE_API_DISABLED gives demos a hard kill switch that forces
-    template summaries without editing code.
+    Checking up front avoids a pointless request and a confusing traceback when
+    the key is simply absent. SUMMARY_PROVIDER=template and CLAUDE_API_DISABLED=1
+    both land here, so either one forces template summaries with no code change.
     """
-    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
-        return False
-    if os.environ.get("CLAUDE_API_DISABLED", "").strip() == "1":
-        return False
-    return True
+    return providers.is_configured()
 
 
 def _is_retryable(exc: Exception) -> bool:
     """Return ``True`` if retrying ``exc`` could plausibly succeed.
 
-    Anthropic SDK errors carry a ``status_code``; anything in
-    ``_NON_RETRYABLE_STATUS`` is a permanent client error.  A missing API key
-    or absent ``anthropic`` package (``RuntimeError`` from ``_get_client``) is
-    likewise permanent.  Everything else — timeouts, connection resets, 429,
-    5xx — is treated as transient.
+    Delegated to the provider module because the classification is
+    vendor-specific: Google raises ClientError/ServerError, Anthropic exposes
+    ``status_code``. Rate limits and 5xx are transient; bad keys, malformed
+    requests and exhausted quotas are not.
     """
-    if isinstance(exc, RuntimeError):
-        return False
+    return providers.is_retryable(exc)
 
-    status = getattr(exc, "status_code", None)
-    if isinstance(status, int):
-        return status not in _NON_RETRYABLE_STATUS
 
-    return True
+def _brief(exc: Exception, limit: int = 180) -> str:
+    """One-line, truncated form of an exception for logging.
+
+    Gemini quota errors carry ~2KB of JSON. Logged in full on every retry they
+    buried the single line that mattered ("limit: 0"), so the message is
+    collapsed to one line and capped.
+    """
+    text = " ".join(str(exc).split())
+    return text if len(text) <= limit else text[:limit] + " …[truncated]"
 
 
 def _backoff_delay(attempt: int) -> float:
@@ -222,11 +226,30 @@ def _template_summary(data: DetectionData) -> str:
         f"in the detection zone."
     )
 
-    # Append route suggestion for heavy / bottleneck.
-    if data.severity in ("heavy", "bottleneck"):
-        return f"{base} {route_advice(data.camera_id, data.live_severity)}"
+    # Name the affected direction rather than the whole road: "heavy
+    # northbound" is actionable where "heavy" alone tells a southbound driver
+    # nothing useful.
+    directional = ""
+    if data.directions and set(data.directions) != {"combined"}:
+        busy = [
+            f"{label} is {d.get('severity')}"
+            for label, d in sorted(data.directions.items())
+            if d.get("severity") in ("heavy", "bottleneck")
+        ]
+        clear = [
+            label for label, d in sorted(data.directions.items())
+            if d.get("severity") in ("free", "moderate")
+        ]
+        if busy:
+            directional = " " + ", ".join(busy).capitalize() + "."
+            if clear:
+                directional += f" {' and '.join(clear).capitalize()} is flowing."
 
-    return base
+    if data.severity in ("heavy", "bottleneck"):
+        return (f"{base}{directional} "
+                f"{route_advice(data.camera_id, data.live_severity)}")
+
+    return f"{base}{directional}"
 
 
 def _template_alert_description(data: DetectionData) -> str:
@@ -254,50 +277,19 @@ def _camera_display_name(camera_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Claude API interaction (async)
+# Model interaction (async)
 # ---------------------------------------------------------------------------
+# The vendor-specific part lives in detection/providers.py and is selected by
+# the SUMMARY_PROVIDER environment variable. Everything in this module —
+# retry/backoff, the circuit breaker, per-camera caching and the template
+# fallback — is vendor-independent and unchanged by a provider switch.
 
-# Lazy-loaded Anthropic client (created on first use so that import of this
-# module never fails even when the ``anthropic`` package is not installed).
-_client: Optional[object] = None
+# Ceiling on generated length. Billing (where it applies) is on tokens actually
+# produced, so the real length control is the two-sentence rule in the system
+# prompt below; this is only a safety cap.
+_MAX_TOKENS: int = 150
 
-
-def _get_client():
-    """Return a shared ``anthropic.AsyncAnthropic`` client, creating it on
-    first call.  Raises ``RuntimeError`` if the API key is not set or the
-    ``anthropic`` package is missing.
-    """
-    global _client
-
-    if _client is not None:
-        return _client
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY environment variable is not set. "
-            "Claude API summaries are unavailable; using template fallback."
-        )
-
-    try:
-        import anthropic  # noqa: E402  — intentionally lazy
-    except ImportError as exc:
-        raise RuntimeError(
-            "The 'anthropic' package is not installed.  "
-            "Run: pip install anthropic"
-        ) from exc
-
-    _client = anthropic.AsyncAnthropic(api_key=api_key)
-    logger.info("Anthropic async client initialised.")
-    return _client
-
-
-# The model used for all summary generation.  Haiku is sufficient here: the
-# facts are supplied in the prompt (including the detour), so the model only
-# phrases them — there is nothing for it to reason about or recall.
-_MODEL: str = "claude-haiku-4-5"
-
-# System prompt that shapes all Claude responses for traffic summaries.
+# System prompt that shapes all model responses for traffic summaries.
 # Kept deliberately short: it is re-sent on every request and is far below the
 # minimum cacheable prefix, so every token here is billed on every call.
 _SYSTEM_PROMPT: str = (
@@ -309,8 +301,8 @@ _SYSTEM_PROMPT: str = (
 )
 
 
-async def _call_claude_api(data: DetectionData, prompt_type: str = "summary") -> str:
-    """Make a single Claude API call and return the generated text.
+async def _call_model(data: DetectionData, prompt_type: str = "summary") -> str:
+    """Generate one summary with the configured provider.
 
     Parameters
     ----------
@@ -323,45 +315,43 @@ async def _call_claude_api(data: DetectionData, prompt_type: str = "summary") ->
     Returns
     -------
     str
-        The raw text content from Claude's response.
+        The generated text.
 
     Raises
     ------
     Exception
         Any API or network error is propagated to the caller for retry
-        handling.
+        handling and circuit-breaker classification.
     """
-    client = _get_client()
-
     # Supply the curated detour rather than asking the model to recall one —
     # road names are the only part of the summary the model could get wrong.
     detour = ""
     if data.severity in ("heavy", "bottleneck"):
         detour = "\nDetour: " + route_advice(data.camera_id, data.live_severity)
 
+    # Per-direction detail when the camera is calibrated. A two-way road where
+    # one side is blocked and the other is clear needs both stated — a single
+    # figure describes neither, which is the whole reason directions exist.
+    per_direction = ""
+    if data.directions and set(data.directions) != {"combined"}:
+        rows = ", ".join(
+            f"{label} {d.get('severity', '?')} ({d.get('vehicle_count', 0)} vehicles)"
+            for label, d in sorted(data.directions.items())
+        )
+        per_direction = f"\nBy direction: {rows}"
+
     # `color` is dashboard styling the model never mentions, so it is not sent.
     facts = (
         f"Location: {_camera_display_name(data.camera_id)}\n"
         f"Vehicles: {data.vehicle_count}\n"
-        f"Severity: {data.severity}{detour}"
+        f"Severity: {data.severity}{per_direction}{detour}"
     )
     if prompt_type == "alert":
         user_message = f"Urgent alert:\n{facts}"
     else:
         user_message = f"Summary:\n{facts}"
 
-    response = await client.messages.create(
-        model=_MODEL,
-        # Safety cap only — billing is on tokens actually generated, so the
-        # length control that saves money is the two-sentence rule in the
-        # system prompt, not this ceiling.
-        max_tokens=150,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}],
-    )
-
-    # Extract the text from the first content block.
-    return response.content[0].text.strip()
+    return await providers.generate(_SYSTEM_PROMPT, user_message, _MAX_TOKENS)
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +457,7 @@ class TrafficSummaryService:
 
         for attempt in range(_MAX_RETRIES):
             try:
-                text = await _call_claude_api(data, prompt_type)
+                text = await _call_model(data, prompt_type)
                 self._close_breaker()
 
                 summary = TrafficSummary(
@@ -476,7 +466,9 @@ class TrafficSummaryService:
                     severity=data.severity,
                     vehicle_count=data.vehicle_count,
                     timestamp=datetime.now(timezone.utc).isoformat(),
-                    source="claude_api",
+                    # Name the provider that actually answered, not a fixed
+                    # "claude_api" — the backend is configurable now.
+                    source=providers.active_provider(),
                 )
                 self._cache[data.camera_id] = summary
                 logger.info(
@@ -491,20 +483,22 @@ class TrafficSummaryService:
 
                 if not _is_retryable(exc):
                     logger.warning(
-                        "[%s] Claude API failed permanently (not retryable): %s",
+                        "[%s] %s API failed permanently (not retryable): %s",
                         data.camera_id,
-                        exc,
+                        providers.active_provider(),
+                        _brief(exc),
                     )
                     self._maybe_open_breaker()
                     return self._fallback(data, prompt_type)
 
                 delay = _backoff_delay(attempt)
                 logger.warning(
-                    "[%s] Claude API attempt %d/%d failed: %s — retrying in %.1fs",
+                    "[%s] %s API attempt %d/%d failed: %s — retrying in %.1fs",
                     data.camera_id,
+                    providers.active_provider(),
                     attempt + 1,
                     _MAX_RETRIES,
-                    exc,
+                    _brief(exc),
                     delay,
                 )
                 if attempt < _MAX_RETRIES - 1:
@@ -527,7 +521,8 @@ class TrafficSummaryService:
             return False
 
         if time.monotonic() >= self._breaker_open_until:
-            logger.info("Claude API cooldown elapsed — probing with one request.")
+            logger.info("%s API cooldown elapsed — probing with one request.",
+                        providers.active_provider())
             self._breaker_open_until = 0.0
             self._breaker_logged = False
             return False
@@ -542,7 +537,8 @@ class TrafficSummaryService:
         self._breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN
         if not self._breaker_logged:
             logger.warning(
-                "Claude API circuit OPEN after %d consecutive failures — "
+                providers.active_provider(),
+                "%s API circuit OPEN after %d consecutive failures — "
                 "using template summaries for the next %.0fs.",
                 self._consecutive_failures,
                 _BREAKER_COOLDOWN,
@@ -552,7 +548,7 @@ class TrafficSummaryService:
     def _close_breaker(self) -> None:
         """Reset all failure state after a successful call."""
         if self._consecutive_failures >= _BREAKER_THRESHOLD:
-            logger.info("Claude API recovered — circuit CLOSED.")
+            logger.info("%s API recovered — circuit CLOSED.", providers.active_provider())
         self._consecutive_failures = 0
         self._breaker_open_until = 0.0
         self._breaker_logged = False

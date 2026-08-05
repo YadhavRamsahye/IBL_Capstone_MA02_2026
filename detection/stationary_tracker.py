@@ -87,11 +87,31 @@ def iou(a: list[float], b: list[float]) -> float:
     return inter / union if union > 0 else 0.0
 
 
+def centre_of(box: list[float]) -> tuple[float, float]:
+    return ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
+
+
 @dataclass
 class _Track:
     box: list[float]
     stationary_frames: int = 0
     missed_frames: int = 0
+    # Centre when this vehicle was first seen. Displacement from here is what
+    # gives the vehicle a direction of travel — see detection/direction.py.
+    origin: tuple[float, float] = (0.0, 0.0)
+    age_frames: int = 0
+    # COCO class id, carried so per-direction PCU can be computed from the same
+    # association rather than re-matching boxes to classes downstream.
+    cls_id: int = -1
+
+    @property
+    def centre(self) -> tuple[float, float]:
+        return centre_of(self.box)
+
+    @property
+    def displacement(self) -> tuple[float, float]:
+        cx, cy = self.centre
+        return (cx - self.origin[0], cy - self.origin[1])
 
 
 @dataclass
@@ -129,9 +149,14 @@ class StationaryTracker:
     def _frames_required(self) -> int:
         return max(1, int(round(STALL_SECONDS_REQUIRED / self.frame_interval)))
 
-    def update(self, boxes: list[list[float]]) -> Verdict:
-        """Consume one frame's vehicle boxes and return the current verdict."""
-        self._associate(boxes)
+    def update(self, boxes: list[list[float]],
+               classes: list[int] | None = None) -> Verdict:
+        """Consume one frame's vehicle boxes and return the current verdict.
+
+        `classes` are the matching COCO class ids, kept on each track so
+        per-direction PCU can reuse this association.
+        """
+        self._associate(boxes, classes or [])
 
         stationary = [t for t in self._tracks
                       if t.stationary_frames >= self._frames_required
@@ -184,6 +209,14 @@ class StationaryTracker:
         )
         return verdict
 
+    def visible_tracks(self) -> list[_Track]:
+        """Tracks detected in the most recent frame.
+
+        Exposed so direction classification can reuse this association rather
+        than running a second, independent tracker over the same boxes.
+        """
+        return [t for t in self._tracks if t.missed_frames == 0]
+
     def reset(self) -> None:
         """Drop all state — call when a stream reconnects and continuity breaks."""
         self._tracks.clear()
@@ -191,12 +224,13 @@ class StationaryTracker:
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
-    def _associate(self, boxes: list[list[float]]) -> None:
+    def _associate(self, boxes: list[list[float]], classes: list[int]) -> None:
         """Greedy IoU matching of this frame's boxes onto existing tracks."""
         unmatched_tracks = list(self._tracks)
         matched: list[_Track] = []
 
-        for box in boxes:
+        for i, box in enumerate(boxes):
+            cls_id = classes[i] if i < len(classes) else -1
             best, best_iou = None, MATCH_IOU
             for track in unmatched_tracks:
                 score = iou(track.box, box)
@@ -204,16 +238,19 @@ class StationaryTracker:
                     best, best_iou = track, score
 
             if best is None:
-                matched.append(_Track(box=list(box)))
+                matched.append(_Track(box=list(box), origin=centre_of(box),
+                                      cls_id=cls_id))
                 continue
 
             unmatched_tracks.remove(best)
+            best.age_frames += 1
             # Compare against the box the track held *before* this update, so
             # "stationary" measures actual displacement.
             best.stationary_frames = (
                 best.stationary_frames + 1 if iou(best.box, box) >= STATIONARY_IOU else 0
             )
             best.box = list(box)
+            best.cls_id = cls_id
             best.missed_frames = 0
             matched.append(best)
 

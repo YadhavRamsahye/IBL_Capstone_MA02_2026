@@ -109,6 +109,60 @@ def classify(pcu: float, camera_id: str) -> tuple[str, str, float]:
     return "free", FREE_COLOR, saturation
 
 
+# Ordering used to pick the worst of several directions. A camera's headline
+# severity is the worst direction, not the average: a driver approaching a road
+# with one side gridlocked needs to see "bottleneck", and averaging it against
+# a clear opposite carriageway would hide exactly the condition that matters.
+_SEVERITY_RANK: dict[str, int] = {
+    "free": 0, "moderate": 1, "heavy": 2, "bottleneck": 3,
+}
+
+
+def worst_severity(severities) -> str:
+    """Return the most severe of the given severities ('free' if empty)."""
+    return max(severities, key=lambda s: _SEVERITY_RANK.get(s, 0), default="free")
+
+
+def colour_for(severity: str) -> str:
+    for _, name, colour in SEVERITY_BANDS:
+        if name == severity:
+            return colour
+    return FREE_COLOR
+
+
+def classify_directional(camera_id: str, grouped_tracks: dict) -> dict:
+    """Classify each direction of a camera independently.
+
+    `grouped_tracks` maps a direction label to the tracks travelling that way
+    (see detection/direction.py). Each direction is scored against its own
+    capacity, so a two-way road no longer reports one number that describes
+    neither side.
+
+    Returns {label: {vehicle_count, pcu, saturation, severity, color}}.
+    """
+    from detection.direction import direction_capacity   # avoids a cycle
+
+    camera_capacity = capacity_for(camera_id)
+    out: dict[str, dict] = {}
+    for label, tracks in grouped_tracks.items():
+        pcu = pcu_total(t.cls_id for t in tracks)
+        capacity = direction_capacity(camera_id, label, camera_capacity)
+        saturation = pcu / capacity if capacity > 0 else 0.0
+        severity = "free"
+        for threshold, name, _ in SEVERITY_BANDS:
+            if saturation >= threshold:
+                severity = name
+                break
+        out[label] = {
+            "vehicle_count": len(tracks),
+            "pcu":           round(pcu, 2),
+            "saturation":    round(saturation, 3),
+            "severity":      severity,
+            "color":         colour_for(severity),
+        }
+    return out
+
+
 def classify_count(vehicle_count: int, camera_id: str) -> tuple[str, str, float]:
     """Classify a raw vehicle count when per-class data is unavailable.
 

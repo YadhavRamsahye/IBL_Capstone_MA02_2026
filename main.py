@@ -34,6 +34,7 @@ load_dotenv()
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from database import DB_AVAILABLE, AsyncSessionLocal as _AsyncSession
+from detection import direction
 from detection.severity import capacity_for
 from auth import (
     authenticate, create_user, get_current_user, get_session_secret,
@@ -43,6 +44,7 @@ from auth import (
 from detection.mock_pipeline import run_mock_pipeline
 from detection.pipeline import run_pipeline
 from detection.hls_pipeline import run_hls_pipeline
+from detection import camera_catalogue
 from detection.trafficwatch import discover_cameras
 from detection.claude_api import summary_service
 from detection.incident_detector import IncidentDetector
@@ -884,8 +886,15 @@ async def api_alerts_list(limit: int = 50):
 
 
 @app.get("/api/cameras", response_class=JSONResponse, dependencies=[Depends(require_user)])
-async def api_cameras():
-    """Return the discovered camera list enriched with live detection state."""
+async def api_cameras(include_catalogue: bool = True):
+    """Cameras with live detection state, plus the rest of the MYT catalogue.
+
+    MYT publishes 38 cameras island-wide but only the ACTIVE_CAMERAS subset has
+    detection running — each one costs an ffmpeg subprocess and a YOLO
+    inference, which CPU-only inference cannot sustain across all of them. The
+    remainder are returned with ``monitored: false`` so the map can show the
+    full network without implying data exists for every marker.
+    """
     result = []
     for cam in _active_cameras:
         src = cam["source"]
@@ -908,8 +917,40 @@ async def api_cameras():
             "validated":        cam.get("validated", False),
             "current_severity": det.get("severity"),
             "current_count":    det.get("vehicle_count"),
+            # Per-direction breakdown; a camera that has not been calibrated
+            # reports a single "combined" entry. See detection/direction.py.
+            "directions":       det.get("directions", {}),
+            "is_two_way":       direction.is_two_way(cam["camera_id"]),
             "is_mock":          src == "mock",
+            "monitored":        True,
+            "region":           cam.get("region", ""),
+            "coords_precision": cam.get("coords_precision", "exact"),
         })
+
+    if include_catalogue:
+        live = {c["camera_id"] for c in _active_cameras}
+        for cam in camera_catalogue.CAMERAS:
+            if cam["camera_id"] in live:
+                continue
+            result.append({
+                "camera_id":        cam["camera_id"],
+                "name":             cam["name"],
+                "lat":              cam["lat"],
+                "lng":              cam["lng"],
+                "source":           cam["source"],
+                "stream_base":      "",
+                "stream_type":      "hls",
+                "validated":        False,
+                "current_severity": None,
+                "current_count":    None,
+                "directions":       {},
+                "is_two_way":       False,
+                "is_mock":          False,
+                # Catalogued but not processed — no detection data exists.
+                "monitored":        False,
+                "region":           cam["region"],
+                "coords_precision": cam["coords_precision"],
+            })
     return result
 
 
