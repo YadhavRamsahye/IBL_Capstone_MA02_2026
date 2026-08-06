@@ -20,13 +20,22 @@ removes cameras.
 
 Coordinates
 -----------
-MYT's page carries no coordinates. Four cameras have hand-verified positions
-(kept as `exact`); the rest are placed at the centroid of the region MYT groups
-them under and marked `approximate`. Region-level placement is honest — the
-camera really is in that region — and the UI shows approximate markers
-differently so they are never mistaken for surveyed positions. Replace a
-camera's entry with a real coordinate and set precision to "exact" as you
-verify them.
+MYT's page carries no coordinates. Cameras with a KNOWN_COORDS entry below
+are marked `exact` - each one checked against tools/validate_camera_coords.py
+(a real OSM road within 40m) before being trusted, not just plausible-
+sounding. Everything else is placed at the centroid of the region MYT groups
+it under and marked `unverified`.
+
+Earlier versions of this generator spread unverified cameras around their
+region centroid on a ring, so each got its own pixel on the map. That was a
+mistake worth naming: it invented a precise-looking position for a camera
+whose position is not known, and it looked exactly like a bug to anyone
+using the map (a perfect circle of evenly-spaced dots over open ground). An
+`unverified` camera now shares the exact region centroid with every other
+unverified camera in that region - main.py aggregates these into one marker
+per region rather than rendering several identical-looking individual dots.
+Replace a camera's entry with a real, validated coordinate and it graduates
+to `exact` and its own marker automatically.
 """
 
 from __future__ import annotations
@@ -56,12 +65,36 @@ REGION_CENTRES: dict[str, tuple[float, float]] = {
 }
 FALLBACK_CENTRE = (-20.2000, 57.5000)
 
-# Positions verified by hand; these keep precision "exact".
+# Positions verified by hand; these keep precision "exact". Every entry
+# below is checked against tools/validate_camera_coords.py - a real OSM
+# road within 40m - before being trusted, not just plausible-sounding.
+#
+# "Verified by hand" turned out to be weaker than it sounds: a bounding-box
+# sea check previously reported all 38 as fine while one sat in Port Louis
+# harbour. la_chaussee and casernes below were both re-derived on
+# 2026-08-06 for exactly that reason - their old values passed a road-
+# proximity check by coincidence (an unrelated unnamed road happened to be
+# nearby) while the actual *named* street they're supposed to be on was
+# 500m-1km away. See ..\capstone-notes\2026-08-06-camera-positions-verified.md
+# for the before/after evidence on every corrected or newly-added entry.
 KNOWN_COORDS: dict[str, tuple[float, float]] = {
-    "caudan_north": (-20.1626, 57.4939),
-    "caudan_south": (-20.1640, 57.4945),
-    "la_chaussee":  (-20.1608, 57.4972),
-    "casernes":     (-20.1590, 57.4960),
+    "caudan_north": (-20.1626, 57.4939),   # 6.6m from "Caudan Approach Road" - name match, unchanged
+    "caudan_south": (-20.1640, 57.4945),   # 6.9m from an unnamed link road; close to the real "Caudan" quarter centroid - unchanged
+    # Re-derived 2026-08-06: the old value (-20.1608, 57.4972) was 0.2m from
+    # an unnamed service road but ~500m from every real "Rue de la Chaussée"
+    # segment in OSM - passed the proximity check by coincidence, not
+    # because it was on the named street. This point sits directly on it.
+    "la_chaussee": (-20.1640344, 57.5003395),
+    # Re-derived 2026-08-06: the old value (-20.1590, 57.4960) failed the
+    # road-proximity check outright (51.7m to the nearest road) and sat
+    # ~1km from the nearest real "Rue Brabant" segment - this is very
+    # likely the harbour-adjacent marker flagged directly from a map
+    # screenshot. This point is the spot on Rue Brabant closest to "Les
+    # Casernes" (the historical barracks area the camera is named for,
+    # confirmed via a real business address in that locality) - it lands
+    # exactly at Rue Brabant's junction with Rue Lord Kitchener, which is
+    # why the validator names the latter as the nearest road.
+    "casernes": (-20.1654977, 57.4921943),
     # Added 2026-08-06 (map-accuracy audit). Web-search-sourced, specifically
     # named to the landmark/road itself (not a general town centroid) - see
     # ..\capstone-notes\2026-08-06-camera-location-audit.md for the sources
@@ -70,6 +103,18 @@ KNOWN_COORDS: dict[str, tuple[float, float]] = {
     # not treated as junction-level precision.
     "place_darmes":     (-20.1619577, 57.5021109),
     "pailles_motorway": (-20.196876, 57.483271),
+    # Promoted 2026-08-06 (Overpass/Nominatim geocoding pass, Step 3).
+    # Each is a precise, specifically-named OSM landmark match for the
+    # camera's own name - not a suburb/village centroid - and lands
+    # directly on or beside a real road. See the positions-verified note
+    # for what was tried and rejected for the cameras NOT promoted here
+    # (terre_rouge_motorway, ebene_motorway, queen_street_1/2, floreal_road,
+    # palma_road, beau_bassin_main_road, curepipe_suisse_junction) - each of
+    # those only turned up a generic town/suburb centroid or no match at
+    # all, which the task was explicit is not good enough to promote on.
+    "reduit_flyover":  (-20.2316888, 57.5000930),   # "Réduit Junction" by name, 0.0m
+    "jan_palach_north": (-20.3162102, 57.5261022),  # "Jan Palach North" by name, 16.6m from Jerningham Street
+    "jan_palach_south": (-20.3178309, 57.5272002),  # "Jan Palach South" by name, 9.1m
 }
 
 # Stream identifier → camera_id, where the derived id would not match the ids
@@ -146,43 +191,31 @@ def scrape() -> list[dict]:
     return cameras
 
 
-# Radius of the ring that separates cameras sharing a region centroid.
-# ~0.0035 degrees is roughly 390 m at Mauritius' latitude — inside the town the
-# camera is named for, so the marker still means "in this region" and nothing
-# more precise. Without it six Curepipe cameras land on one pixel and the map
-# shows 12 markers for 38 cameras.
-RING_RADIUS_DEG = 0.0035
-
-
 def attach_coords(cameras: list[dict]) -> None:
-    import math
+    """Assign each camera a coordinate and an honest precision label.
 
+    Previous versions of this function spread unverified cameras around
+    their region centroid on a ring, purely so they wouldn't all render on
+    the same pixel. That produced a visibly perfect circle of evenly-spaced
+    dots over open ground - which reads as a deliberate, surveyed layout to
+    anyone looking at the map, not as "unknown". It invented a precise-
+    looking position for a camera whose position is not known, which is
+    the opposite of what "approximate" was supposed to signal.
+
+    Cameras with no verified coordinate now get the region centroid itself
+    - the same point as every other unverified camera in that region - and
+    are labelled "unverified", not "approximate". main.py groups these into
+    one aggregate marker per region rather than rendering 6 identical-
+    looking dots for 6 cameras nobody has actually checked. See Step 4 of
+    ..\\capstone-notes\\2026-08-06-camera-positions-verified.md.
+    """
     for cam in cameras:
         if cam["camera_id"] in KNOWN_COORDS:
             cam["lat"], cam["lng"] = KNOWN_COORDS[cam["camera_id"]]
             cam["coords_precision"] = "exact"
         else:
             cam["lat"], cam["lng"] = REGION_CENTRES.get(cam["region"], FALLBACK_CENTRE)
-            cam["coords_precision"] = "approximate"
-
-    # Spread each region's approximate cameras evenly around its centroid so
-    # every one is separately visible and clickable. Deterministic, so
-    # regenerating the catalogue does not shuffle the map.
-    by_region: dict[str, list[dict]] = {}
-    for cam in cameras:
-        if cam["coords_precision"] == "approximate":
-            by_region.setdefault(cam["region"], []).append(cam)
-
-    for region, group in by_region.items():
-        if len(group) < 2:
-            continue
-        clat, clng = REGION_CENTRES.get(region, FALLBACK_CENTRE)
-        # Longitude degrees shrink with latitude; correct so the ring is round.
-        lng_scale = 1.0 / max(0.2, math.cos(math.radians(clat)))
-        for i, cam in enumerate(sorted(group, key=lambda c: c["camera_id"])):
-            angle = 2 * math.pi * i / len(group)
-            cam["lat"] = round(clat + RING_RADIUS_DEG * math.sin(angle), 6)
-            cam["lng"] = round(clng + RING_RADIUS_DEG * math.cos(angle) * lng_scale, 6)
+            cam["coords_precision"] = "unverified"
 
 
 def render(cameras: list[dict]) -> str:
@@ -202,10 +235,12 @@ def render(cameras: list[dict]) -> str:
         f"Cameras: {len(cameras)} across {len(regions)} regions "
         f"({exact} with verified coordinates)",
         "",
-        "coords_precision is 'exact' for hand-verified positions and",
-        "'approximate' for cameras placed at their region centroid because MYT",
-        "publishes no coordinates. The UI distinguishes the two so an",
-        "approximate marker is never read as a surveyed position.",
+        "coords_precision is 'exact' for positions checked against",
+        "tools/validate_camera_coords.py (a real OSM road within 40m) and",
+        "'unverified' for cameras placed at their region centroid because MYT",
+        "publishes no coordinates and nobody has verified this one yet. The UI",
+        "aggregates unverified cameras into one per-region marker rather than",
+        "plotting individual positions nobody has confirmed.",
         '"""',
         "",
         "from __future__ import annotations",
