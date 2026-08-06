@@ -22,3 +22,7 @@ main copy.py
 *.bak
 *.zip
 IBL_Capstone_MA02_2026/
+
+# Overpass API response cache - regenerable, and re-fetching costs the
+# shared free API nothing worth avoiding on a fresh checkout
+tools/validate_camera_coords_cache/
