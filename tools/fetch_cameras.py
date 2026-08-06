@@ -15,8 +15,9 @@ catalogue is then a reviewable artefact: you can see what changed in a diff,
 and startup never depends on a scrape succeeding. Re-run this when MYT adds or
 removes cameras.
 
-    python tools/fetch_cameras.py            # regenerate the catalogue
-    python tools/fetch_cameras.py --dry-run  # show what would change
+    python tools/fetch_cameras.py                       # regenerate the catalogue
+    python tools/fetch_cameras.py --dry-run             # show what would change
+    python tools/fetch_cameras.py --skip-coord-validation  # skip the OSM gate below
 
 Coordinates
 -----------
@@ -25,6 +26,14 @@ are marked `exact` - each one checked against tools/validate_camera_coords.py
 (a real OSM road within 40m) before being trusted, not just plausible-
 sounding. Everything else is placed at the centroid of the region MYT groups
 it under and marked `unverified`.
+
+Every run re-validates KNOWN_COORDS against OpenStreetMap before writing
+anything (validate_known_coords(), below) and refuses to write the catalogue
+if any entry no longer sits near a real road. This is the check that would
+have caught a camera marker sitting in Port Louis harbour before it ever
+reached the map - a prior bounding-box sea check called that "fine". Results
+are cached, so this costs real network time only the first run after
+KNOWN_COORDS changes.
 
 Earlier versions of this generator spread unverified cameras around their
 region centroid on a ring, so each got its own pixel on the map. That was a
@@ -191,6 +200,41 @@ def scrape() -> list[dict]:
     return cameras
 
 
+def validate_known_coords() -> None:
+    """Gate: every KNOWN_COORDS entry must sit within a real OSM road, or the
+    catalogue is not written.
+
+    This is the check that would have caught casernes sitting in Port Louis
+    harbour before it ever reached the map - a bounding-box sea check called
+    it "fine" because a rectangle around the island contains the harbour.
+    Results are cached (see tools/validate_camera_coords.py), so this only
+    costs real Overpass time the first run after a KNOWN_COORDS entry
+    changes or is added; every other run answers from disk.
+    """
+    from tools import validate_camera_coords as validator
+
+    print(f"\nValidating {len(KNOWN_COORDS)} exact coordinates against OpenStreetMap …")
+    failures = []
+    for camera_id, (lat, lng) in KNOWN_COORDS.items():
+        result = validator.validate_point(camera_id, lat, lng)
+        dist = f"{result['distance_m']:.1f}m" if result["distance_m"] is not None else "n/a"
+        road = result["nearest_road"] or "(no road found within search radius)"
+        print(f"  [{'OK' if result['passed'] else 'FAIL'}] {camera_id:<20} {dist:>8}  {road}")
+        if not result["passed"]:
+            failures.append((camera_id, dist, road))
+
+    if failures:
+        detail = "\n  ".join(f"{cid}: {dist} from nearest road ({road})" for cid, dist, road in failures)
+        sys.exit(
+            f"\nRefusing to write the catalogue: {len(failures)} KNOWN_COORDS "
+            f"entr{'y' if len(failures) == 1 else 'ies'} failed road-proximity validation "
+            f"(tools/validate_camera_coords.py, {validator.PASS_THRESHOLD_M}m threshold):\n"
+            f"  {detail}\n\n"
+            "Fix the coordinate(s) above before regenerating, or pass "
+            "--skip-coord-validation if Overpass is unreachable and you accept the risk."
+        )
+
+
 def attach_coords(cameras: list[dict]) -> None:
     """Assign each camera a coordinate and an honest precision label.
 
@@ -287,7 +331,16 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true",
                     help="print a summary without writing the catalogue")
+    ap.add_argument("--skip-coord-validation", action="store_true",
+                    help="skip the OSM road-proximity gate on KNOWN_COORDS "
+                         "(only for when Overpass is unreachable)")
     args = ap.parse_args()
+
+    if args.skip_coord_validation:
+        print("--skip-coord-validation set: KNOWN_COORDS will not be checked "
+              "against OpenStreetMap. Do not rely on this for a real release.")
+    else:
+        validate_known_coords()
 
     cameras = scrape()
     if not cameras:
