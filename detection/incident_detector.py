@@ -7,6 +7,7 @@ Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
 from __future__ import annotations
 
 import logging
+import statistics
 import uuid
 from collections import deque
 from dataclasses import dataclass
@@ -16,17 +17,33 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # ── Tunable thresholds ────────────────────────────────────────────────────────
-HISTORY_SIZE        = 10   # readings kept per camera
-SPIKE_THRESHOLD     = 6    # vehicles added in one step → sudden_congestion
-BLOCKAGE_HIGH_MIN   = 10   # previous count must be ≥ this
+HISTORY_SIZE        = 12   # readings kept per camera
+SPIKE_THRESHOLD     = 8    # vehicles above the rolling median → sudden_congestion
+BLOCKAGE_HIGH_MIN   = 10   # baseline median must be ≥ this
 BLOCKAGE_LOW_MAX    = 2    # current count must drop to ≤ this
-BOTTLENECK_STREAK   = 2    # consecutive bottleneck readings → sustained_bottleneck
+BOTTLENECK_STREAK   = 4    # consecutive bottleneck readings → sustained_bottleneck
 BUILDUP_STREAK      = 4    # consecutive rising readings → rapid_buildup
-BUILDUP_MIN_STEP    = 1    # each step must rise ≥ this many vehicles
+BUILDUP_MIN_STEP    = 2    # each step must rise ≥ this many vehicles
 FREEZE_TIMEOUT_SECS = 90   # seconds without data → camera_freeze
-NIGHT_ZERO_STREAK   = 3    # consecutive zero readings at night → night_low_visibility
-NIGHT_START_HOUR    = 18   # UTC hour — night window start (22:00 Port Louis)
-NIGHT_END_HOUR      = 6    # UTC hour — night window end (10:00 Port Louis)
+NIGHT_ZERO_STREAK   = 5    # consecutive zero readings at night → night_low_visibility
+
+# Mauritius is UTC+4. The previous 18→06 UTC window meant 22:00→10:00 local,
+# which swallowed the entire morning rush — a busy 08:00 road with a briefly
+# empty frame was being reported as night-time low visibility.
+NIGHT_START_HOUR    = 17   # UTC — 21:00 Port Louis
+NIGHT_END_HOUR      = 1    # UTC — 05:00 Port Louis
+
+# A candidate must repeat on this many consecutive readings before it becomes
+# a reported incident. Single-reading detections are what produced the
+# raise-then-resolve-seconds-later churn: YOLO counts jitter, and any rule
+# comparing two adjacent readings fires on that jitter alone.
+CONFIRM_STREAK      = 3
+
+# Candidates below this never surface, regardless of persistence.
+MIN_CONFIDENCE      = 0.70
+
+# Incidents kept in memory. Durable history belongs in the `incidents` table.
+LOG_MAX             = 500
 
 # ── Incident type metadata ────────────────────────────────────────────────────
 _TYPE_META: dict[str, dict] = {
@@ -106,10 +123,14 @@ class IncidentDetector:
         self._history: dict[str, deque[_Reading]] = {}
         # camera_id → {incident_type: Incident}  (only open/unresolved)
         self._open: dict[str, dict[str, Incident]] = {}
-        # flat chronological list of every incident ever raised
-        self._log: list[Incident] = []
+        # Chronological ring buffer of raised incidents. Bounded because this
+        # was an unbounded list that grew for the lifetime of the process;
+        # durable history now lives in the `incidents` table instead.
+        self._log: deque[Incident] = deque(maxlen=LOG_MAX)
         # camera_id → consecutive zero-count readings during night hours
         self._night_zero_streak: dict[str, int] = {}
+        # camera_id → {incident_type: consecutive readings the candidate held}
+        self._pending: dict[str, dict[str, int]] = {}
 
     # ── Public interface ──────────────────────────────────────────────────────
 
@@ -134,6 +155,8 @@ class IncidentDetector:
         hist = self._history[camera_id]
         new: list[Incident] = []
 
+        # Collect candidates first; nothing is reported on a single reading.
+        candidates: dict[str, Incident] = {}
         for check in (
             self._check_sudden_congestion,
             self._check_sustained_bottleneck,
@@ -142,14 +165,32 @@ class IncidentDetector:
             self._check_night_low_visibility,
         ):
             inc = check(camera_id, reading, hist)
-            if inc:
-                new.append(inc)
-                self._log.append(inc)
-                self._open[camera_id][inc.type] = inc
-                logger.info(
-                    "[incident] NEW  camera=%-14s type=%-22s sev=%-8s conf=%.2f count=%d",
-                    camera_id, inc.type, inc.severity, inc.confidence, inc.vehicle_count,
+            if inc and inc.confidence >= MIN_CONFIDENCE:
+                candidates[inc.type] = inc
+
+        pending = self._pending.setdefault(camera_id, {})
+        # A candidate that stops recurring is noise — drop its streak entirely
+        # rather than letting it accumulate across unrelated episodes.
+        for itype in list(pending):
+            if itype not in candidates:
+                del pending[itype]
+
+        for itype, inc in candidates.items():
+            pending[itype] = pending.get(itype, 0) + 1
+            if pending[itype] < CONFIRM_STREAK:
+                logger.debug(
+                    "[incident] candidate camera=%s type=%s (%d/%d readings)",
+                    camera_id, itype, pending[itype], CONFIRM_STREAK,
                 )
+                continue
+            del pending[itype]
+            new.append(inc)
+            self._log.append(inc)
+            self._open[camera_id][inc.type] = inc
+            logger.info(
+                "[incident] CONFIRMED  camera=%-14s type=%-22s sev=%-8s conf=%.2f count=%d",
+                camera_id, inc.type, inc.severity, inc.confidence, inc.vehicle_count,
+            )
 
         resolved = self._auto_resolve(camera_id, reading, ts)
         for inc in resolved:
@@ -174,7 +215,8 @@ class IncidentDetector:
 
     def get_all_incidents(self, limit: int = 100) -> list[dict]:
         """All incidents (resolved + active), newest first, up to *limit*."""
-        return [i.to_dict() for i in reversed(self._log[-limit:])]
+        # deque does not support slicing — materialise first.
+        return [i.to_dict() for i in reversed(list(self._log)[-limit:])]
 
     def get_incidents_by_camera(self, camera_id: str) -> list[dict]:
         """All incidents for a specific camera, newest first."""
@@ -223,10 +265,14 @@ class IncidentDetector:
         r: _Reading,
         hist: deque[_Reading],
     ) -> Optional[Incident]:
-        if not hist or "sudden_congestion" in self._open.get(camera_id, {}):
+        if len(hist) < 3 or "sudden_congestion" in self._open.get(camera_id, {}):
             return None
-        spike = r.count - hist[-1].count
-        if spike < SPIKE_THRESHOLD:
+        # Measured against the rolling median, not the single previous reading.
+        # An adjacent-reading comparison fires on YOLO count jitter and then
+        # stops firing the moment the level holds, so it can never be confirmed.
+        baseline = statistics.median(p.count for p in hist)
+        spike = r.count - baseline
+        if spike < SPIKE_THRESHOLD or r.severity not in ("heavy", "bottleneck"):
             return None
         confidence = min(0.95, 0.60 + spike / 40.0)
         severity   = "critical" if spike >= 20 else "severe" if spike >= 15 else "moderate"
@@ -237,9 +283,14 @@ class IncidentDetector:
             confidence    = confidence,
             vehicle_count = r.count,
             description   = (
-                f"Sudden congestion at {_display(camera_id)}: vehicle count jumped "
-                f"from {hist[-1].count} to {r.count} (+{spike}) in one detection cycle. "
-                f"Possible accident or road obstruction ahead."
+                # Reports the rolling-median baseline, not hist[-1]. The check
+                # was changed to measure against the median (so it survives
+                # confirmation across readings), but this text still quoted the
+                # previous reading — which by then equals the current one, so
+                # it read "jumped from 26 to 26 (+8)".
+                f"Sudden congestion at {_display(camera_id)}: vehicle count rose "
+                f"to {r.count}, {spike:.0f} above the recent average of "
+                f"{baseline:.0f}. Possible accident or road obstruction ahead."
             ),
         )
 
@@ -282,9 +333,13 @@ class IncidentDetector:
         r: _Reading,
         hist: deque[_Reading],
     ) -> Optional[Incident]:
-        if not hist or "road_blockage" in self._open.get(camera_id, {}):
+        if len(hist) < 3 or "road_blockage" in self._open.get(camera_id, {}):
             return None
-        prev = hist[-1].count
+        # Baseline median rather than the previous reading: a single dropped or
+        # mis-decoded frame reads as "count fell from 12 to 0", which is a
+        # detection failure, not a blocked road. The median stays high while
+        # the low reading persists, so only a sustained drop is reported.
+        prev = int(statistics.median(p.count for p in hist))
         if prev < BLOCKAGE_HIGH_MIN or r.count > BLOCKAGE_LOW_MAX:
             return None
         return self._make(
@@ -352,6 +407,12 @@ class IncidentDetector:
             camera_id     = camera_id,
             itype         = "night_low_visibility",
             iseverity     = "minor",
+            # Deliberately below MIN_CONFIDENCE, so this is recorded but never
+            # surfaced as an incident: an empty road at 02:00 is the *expected*
+            # state, not evidence of anything. Distinguishing "camera blinded"
+            # from "nobody is driving" needs a per-camera night-time baseline
+            # this detector does not have. Raise above the gate only once such
+            # a baseline exists.
             confidence    = 0.65,
             vehicle_count = 0,
             description   = (
