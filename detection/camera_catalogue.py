@@ -5,8 +5,8 @@ GENERATED FILE — do not edit by hand.
 Regenerate with:  python tools/fetch_cameras.py
 
 Source : https://www.myt.mu/sinformer/trafficwatch/
-Fetched: 2026-08-05 11:42 UTC
-Cameras: 38 across 8 regions (4 with verified coordinates)
+Fetched: 2026-08-06 16:23 UTC
+Cameras: 38 across 8 regions (6 with verified coordinates)
 
 coords_precision is 'exact' for hand-verified positions and
 'approximate' for cameras placed at their region centroid because MYT
@@ -17,7 +17,7 @@ approximate marker is never read as a surveyed position.
 from __future__ import annotations
 
 SOURCE_PAGE = 'https://www.myt.mu/sinformer/trafficwatch/'
-FETCHED_AT = '2026-08-05 11:42 UTC'
+FETCHED_AT = '2026-08-06 16:23 UTC'
 
 CAMERAS: list[dict] = [
     # ── Port Louis Center ───────────────────────────────────────
@@ -55,9 +55,9 @@ CAMERAS: list[dict] = [
         "camera_id":        'place_darmes',
         "name":             "Place d'Armes",
         "region":           'Port Louis Center',
-        "lat":              -20.1654,
-        "lng":              57.4989,
-        "coords_precision": 'approximate',
+        "lat":              -20.1619577,
+        "lng":              57.5021109,
+        "coords_precision": 'exact',
         "source":           'https://stream.myt.mu/prod/PLACE_DARMES.stream_720p/playlist.m3u8',
         "origin":           "myt.trafficwatch",
     },
@@ -85,8 +85,8 @@ CAMERAS: list[dict] = [
         "camera_id":        'deschartes_junction',
         "name":             'Deschartes Junction',
         "region":           'Port Louis Center',
-        "lat":              -20.1619,
-        "lng":              57.495172,
+        "lat":              -20.164931,
+        "lng":              57.497036,
         "coords_precision": 'approximate',
         "source":           'https://stream.myt.mu/prod/DESCHARTES_JUNCTION.stream_720p/playlist.m3u8',
         "origin":           "myt.trafficwatch",
@@ -95,8 +95,8 @@ CAMERAS: list[dict] = [
         "camera_id":        'cdm_govt_str_junction',
         "name":             'CDM Govt Str Junction',
         "region":           'Port Louis Center',
-        "lat":              -20.1584,
-        "lng":              57.4989,
+        "lat":              -20.158869,
+        "lng":              57.497036,
         "coords_precision": 'approximate',
         "source":           'https://stream.myt.mu/prod/CDM_GOVT_STR_JUNCTION.stream_720p/playlist.m3u8',
         "origin":           "myt.trafficwatch",
@@ -106,8 +106,8 @@ CAMERAS: list[dict] = [
         "camera_id":        'plaine_lauzun_north',
         "name":             'Plaine Lauzun North',
         "region":           'Port Louis South',
-        "lat":              -20.191031,
-        "lng":              57.488635,
+        "lat":              -20.190057,
+        "lng":              57.487483,
         "coords_precision": 'approximate',
         "source":           'https://stream.myt.mu/prod/PLAINE_LAUZUN_NORTH.stream_720p/playlist.m3u8',
         "origin":           "myt.trafficwatch",
@@ -116,8 +116,8 @@ CAMERAS: list[dict] = [
         "camera_id":        'plaine_lauzun_south',
         "name":             'Plaine Lauzun South',
         "region":           'Port Louis South',
-        "lat":              -20.191031,
-        "lng":              57.492365,
+        "lat":              -20.191329,
+        "lng":              57.491652,
         "coords_precision": 'approximate',
         "source":           'https://stream.myt.mu/prod/PLAINE_LAUZUN_SOUTH.stream_720p/playlist.m3u8',
         "origin":           "myt.trafficwatch",
@@ -126,9 +126,9 @@ CAMERAS: list[dict] = [
         "camera_id":        'pailles_motorway',
         "name":             'Pailles Motorway',
         "region":           'Port Louis South',
-        "lat":              -20.188,
-        "lng":              57.486771,
-        "coords_precision": 'approximate',
+        "lat":              -20.196876,
+        "lng":              57.483271,
+        "coords_precision": 'exact',
         "source":           'https://stream.myt.mu/prod/PAILLES_MOTORWAY.stream_720p/playlist.m3u8',
         "origin":           "myt.trafficwatch",
     },
@@ -136,8 +136,8 @@ CAMERAS: list[dict] = [
         "camera_id":        'old_moka_road',
         "name":             'Old Moka Road',
         "region":           'Port Louis South',
-        "lat":              -20.184969,
-        "lng":              57.492365,
+        "lat":              -20.184671,
+        "lng":              57.491652,
         "coords_precision": 'approximate',
         "source":           'https://stream.myt.mu/prod/OLD_MOKA_ROAD.stream_720p/playlist.m3u8',
         "origin":           "myt.trafficwatch",
@@ -146,8 +146,8 @@ CAMERAS: list[dict] = [
         "camera_id":        'orleans_street',
         "name":             'Orleans Street',
         "region":           'Port Louis South',
-        "lat":              -20.184969,
-        "lng":              57.488635,
+        "lat":              -20.185943,
+        "lng":              57.487483,
         "coords_precision": 'approximate',
         "source":           'https://stream.myt.mu/prod/ORLEANS_STREET.stream_720p/playlist.m3u8',
         "origin":           "myt.trafficwatch",

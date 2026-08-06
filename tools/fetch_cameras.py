@@ -62,6 +62,14 @@ KNOWN_COORDS: dict[str, tuple[float, float]] = {
     "caudan_south": (-20.1640, 57.4945),
     "la_chaussee":  (-20.1608, 57.4972),
     "casernes":     (-20.1590, 57.4960),
+    # Added 2026-08-06 (map-accuracy audit). Web-search-sourced, specifically
+    # named to the landmark/road itself (not a general town centroid) - see
+    # ..\capstone-notes\2026-08-06-camera-location-audit.md for the sources
+    # and confidence notes on each. Everything else in the catalogue stayed
+    # at its region centroid: general "which town is this in" results were
+    # not treated as junction-level precision.
+    "place_darmes":     (-20.1619577, 57.5021109),
+    "pailles_motorway": (-20.196876, 57.483271),
 }
 
 # Stream identifier → camera_id, where the derived id would not match the ids
