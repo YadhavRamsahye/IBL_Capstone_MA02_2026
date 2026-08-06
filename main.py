@@ -59,6 +59,22 @@ logging.basicConfig(level=logging.INFO)
 # Keyed by camera_id; updated in-place by background tasks.
 latest_detections: dict[str, dict] = {}
 
+# Signals a fresh annotated frame landed for a camera, so an open MJPEG stream
+# can wake up and check rather than polling _latest_frames on its own timer.
+# Safe to set from here without call_soon_threadsafe: _store_annotated_frame
+# runs inside asyncio.to_thread(_safe_next, gen) in the HLS camera loop below,
+# and by the time that call returns control here, we're back on the event
+# loop's own thread.
+_frame_events: dict[str, asyncio.Event] = {}
+
+
+def _get_frame_event(camera_id: str) -> asyncio.Event:
+    ev = _frame_events.get(camera_id)
+    if ev is None:
+        ev = asyncio.Event()
+        _frame_events[camera_id] = ev
+    return ev
+
 # Populated by lifespan() after discovery; read by /api/cameras.
 _active_cameras: list[dict] = []
 
@@ -493,6 +509,7 @@ async def _hls_camera_loop(
                         logger.warning("[%s] HLS generator exhausted.", camera_id)
                         break
                     latest_detections[camera_id] = result
+                    _get_frame_event(camera_id).set()
                     if not got_live_frame:
                         logger.info("[%s] HLS stream live — real data flowing.", camera_id)
                         outer_attempt = 0   # reset on first successful frame
@@ -1037,7 +1054,6 @@ async def api_camera_frame(camera_id: str):
 
 
 _MJPEG_BOUNDARY = "frame"
-_MJPEG_POLL_S = 0.2   # how often to check for a newer cached frame, not a real fps
 
 
 async def _mjpeg_frames(camera_id: str):
@@ -1052,7 +1068,17 @@ async def _mjpeg_frames(camera_id: str):
     A plain <img src="this URL"> renders a standard MJPEG stream natively -
     no client-side polling code at all - so each new frame lands the moment
     it exists rather than up to one poll interval later.
+
+    Waits on the camera's frame-ready Event rather than polling
+    _latest_frames on a timer - one popup open no longer costs five
+    dict lookups a second for nothing. The check-clear-recheck-wait
+    sequence below is the standard safe pattern for a manually-reset
+    Event: it avoids the lost-wakeup race where set() lands between an
+    earlier check and the wait() call, because get_latest_frame() (the
+    real data) is always the source of truth, never the Event's flag by
+    itself.
     """
+    event = _get_frame_event(camera_id)
     last_sent_at = None
     try:
         while True:
@@ -1066,7 +1092,13 @@ async def _mjpeg_frames(camera_id: str):
                         f"Content-Type: image/jpeg\r\n"
                         f"Content-Length: {len(jpeg_bytes)}\r\n\r\n"
                     ).encode() + jpeg_bytes + b"\r\n"
-            await asyncio.sleep(_MJPEG_POLL_S)
+                    continue   # a frame may already be queued up behind this one
+
+            event.clear()
+            stored = get_latest_frame(camera_id)
+            if stored is not None and stored[1] != last_sent_at:
+                continue   # landed between the check above and clear() - don't wait for it
+            await event.wait()
     except asyncio.CancelledError:
         # Normal shutdown path - the client closed the <img> connection
         # (popup closed, tab navigated away). Nothing to clean up: this

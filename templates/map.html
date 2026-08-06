@@ -245,8 +245,15 @@ Module   : Dashboard UI / Templates
         .no-incidents  { font-size: 11px; color: rgba(230,237,243,.3); text-align: center; padding: 12px 0; }
 
         /* ── Map ── */
-        .map-wrapper { flex: 1; position: relative; overflow: hidden; }
-        #map { width: 100%; height: 100%; }
+        /* Column flex, not an absolute overlay: the strip used to float on
+           top of the map with `position:absolute; bottom:12px`, which had no
+           guaranteed clearance from the viewport edge or from Leaflet's own
+           bottom-right attribution control - both overlapped it at shorter
+           viewport heights. Giving the strip a real flex row of its own means
+           #map's flex:1 always yields exactly the space the strip needs, at
+           any viewport size, and neither ever covers the other. */
+        .map-wrapper { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
+        #map { width: 100%; flex: 1; min-height: 0; }   /* min-height:0 - flex children don't shrink below content size without it */
 
         .map-info-bar {
             position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
@@ -260,9 +267,9 @@ Module   : Dashboard UI / Templates
 
         /* ── Camera overview strip ── */
         .camera-strip {
-            position: absolute; left: 12px; right: 12px; bottom: 12px;
-            display: flex; gap: 8px; overflow-x: auto; z-index: 500;
-            padding-bottom: 2px;
+            flex-shrink: 0;   /* real row in the flex column, not an overlay - never covers map content */
+            display: flex; gap: 8px; overflow-x: auto;
+            padding: 10px 12px; background: #10151c; border-top: 1px solid #21262d;
         }
         .camera-strip::-webkit-scrollbar { height: 4px; }
         .camera-strip::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
@@ -290,7 +297,10 @@ Module   : Dashboard UI / Templates
         .strip-count { font-size: 9px; color: rgba(230,237,243,.5); margin-top: 1px; }
 
         @media (max-width: 639px) {
-            .camera-strip { bottom: calc(62px + env(safe-area-inset-bottom, 0px) + 8px); }
+            /* No bottom-offset math needed any more - the strip is a normal
+               flex row inside .map-wrapper now, and body's own
+               padding-bottom (set elsewhere) already keeps .main-layout
+               clear of the fixed mobile bar. */
             .strip-item { width: 96px; }
         }
 
@@ -693,11 +703,13 @@ async function fetchCameras() {
             cameraMarkers[id].on('popupclose', () => stopFramePolling(id));
         }
     }
+    // infoActiveCams (set in applyTrafficData) already shows the monitored
+    // count in bold right before this - repeating "N monitored" here doubled
+    // it ("Cameras: 4 4 monitored · 34 catalogued"). This adds only what
+    // the bold number doesn't already say.
     const note = document.getElementById('cameraCoverage');
     if (note) {
-        note.textContent = catalogued
-            ? `${monitored} monitored · ${catalogued} catalogued`
-            : `${monitored} monitored`;
+        note.textContent = catalogued ? `· ${catalogued} catalogued` : '';
     }
 }
 
@@ -842,11 +854,18 @@ function stopFramePolling(id) {
 }
 
 // ── Camera overview strip ─────────────────────────────────────────────────────
-// Always-visible filmstrip, independent of any popup being open. Costs
-// nothing extra server-side: the annotated frame is encoded once per
-// detection cycle regardless of who's watching (measured at ~4ms, ~0.4% of
-// YOLOv8m's own inference time), and every stream - popup or strip - reads
-// the same cached bytes.
+// Always-visible filmstrip, independent of any popup being open - which is
+// exactly why this does NOT use MJPEG. Every <img src="stream.mjpg"> holds an
+// open HTTP connection for as long as the element exists; four always-on strip
+// cameras plus a popup would be five permanently-open connections per logged-
+// in user. At the SRS's 100-500 concurrent users (§5.1.3) that's 500-2,500
+// held-open connections against one uvicorn process. Polling frame.jpg here
+// instead costs one short request every few seconds, not a standing
+// connection - the flicker MJPEG was built to remove matters far less at
+// thumbnail size than it does in an open, attention-getting popup.
+const STRIP_POLL_MS = 3000;
+let stripPoller = null;
+
 function buildCameraStrip() {
     const strip = document.getElementById('cameraStrip');
     if (!strip || strip.dataset.built) return;
@@ -869,12 +888,50 @@ function buildCameraStrip() {
     }
     strip.innerHTML = html;
     strip.dataset.built = '1';
+    map.invalidateSize();   // #map's flex height just changed now the strip has real content
 
-    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
-        if (loc.monitored === false) continue;
-        connectStream(`stripImg_${id}`, `stripPh_${id}`, null, id);
+    refreshStrip();
+    if (!stripPoller) {
+        stripPoller = setInterval(() => { if (!document.hidden) refreshStrip(); }, STRIP_POLL_MS);
     }
 }
+
+async function refreshStripFrame(id) {
+    const img = document.getElementById(`stripImg_${id}`);
+    const ph  = document.getElementById(`stripPh_${id}`);
+    if (!img) return;   // strip not built yet, or camera dropped
+    try {
+        const res = await fetch(`${API_BASE}/api/cameras/${id}/frame.jpg?t=${Date.now()}`);
+        if (res.status === 404) {
+            img.style.display = 'none';
+            if (ph) { ph.style.display = 'flex'; ph.textContent = 'No footage yet'; }
+            return;
+        }
+        if (!res.ok) return;
+
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const prev = img.dataset.blobUrl;
+        img.src = url;
+        img.dataset.blobUrl = url;
+        img.style.display = 'block';
+        if (ph) ph.style.display = 'none';
+        if (prev) URL.revokeObjectURL(prev);
+    } catch (_) {}
+}
+
+function refreshStrip() {
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (loc.monitored === false) continue;
+        refreshStripFrame(id);
+    }
+}
+
+// Tab regains visibility: refresh the strip immediately rather than waiting
+// out the rest of the current STRIP_POLL_MS interval.
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && stripPoller) refreshStrip();
+});
 
 function focusCamera(id) {
     const loc = CAMERA_LOCS[id];
@@ -893,8 +950,8 @@ function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
             <div id="popBadge_${id}">${incidentBadge}</div>
             <table style="font-size:12px;color:#555;width:100%;">
                 <tr><td>Vehicles</td><td><b id="popVeh_${id}">${det.vehicle_count}</b></td></tr>
-                <tr><td>FPS</td><td id="popFps_${id}">${det.fps_processed?.toFixed(2) ?? '—'}</td></tr>
-                <tr><td>Updated</td><td id="popUpd_${id}">${new Date(det.timestamp).toLocaleTimeString()}</td></tr>
+                <tr><td>Detection interval</td><td id="popFps_${id}">${detectionIntervalText(det.fps_processed)}</td></tr>
+                <tr><td>Updated</td><td id="popUpd_${id}">${timeAgo(det.timestamp)}</td></tr>
             </table>
             <div id="popDirs_${id}">${directionRowsHtml(det)}</div>
             ${isHeavy ? routePanelHtml(id, lat, lng) : ''}
@@ -914,8 +971,8 @@ function patchOpenPopup(id, det, color, isHeavy, hasIncident) {
     sev.textContent = det.severity.toUpperCase();
     sev.style.color = color;
     document.getElementById(`popVeh_${id}`).textContent = det.vehicle_count;
-    document.getElementById(`popFps_${id}`).textContent = det.fps_processed?.toFixed(2) ?? '—';
-    document.getElementById(`popUpd_${id}`).textContent = new Date(det.timestamp).toLocaleTimeString();
+    document.getElementById(`popFps_${id}`).textContent = detectionIntervalText(det.fps_processed);
+    document.getElementById(`popUpd_${id}`).textContent = timeAgo(det.timestamp);
     const badge = document.getElementById(`popBadge_${id}`);
     if (badge) badge.innerHTML = incidentBadgeHtml(det);
     const dirs = document.getElementById(`popDirs_${id}`);
@@ -1173,6 +1230,17 @@ function timeAgo(ts) {
     if (diff < 60)   return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     return `${Math.floor(diff / 3600)}h ago`;
+}
+
+// fps_processed is 1 / (time one detection cycle actually took) - a real
+// number, but "FPS 0.40" reads like a broken video player rather than what
+// it actually is: how often this camera gets analysed. Inverting it back to
+// seconds names it for what it is - a deliberate spec (FRAME_INTERVAL is
+// nominally 2.0s; the true figure includes real processing overhead) rather
+// than something that looks like a defect.
+function detectionIntervalText(fps) {
+    if (!fps || fps <= 0) return '—';
+    return `${(1 / fps).toFixed(1)}s`;
 }
 
 // ── Route suggestion ──────────────────────────────────────────────────────────
