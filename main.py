@@ -159,25 +159,40 @@ def _safe_next(gen):
         return _GEN_DONE
 
 
+async def _upsert_camera(db, camera_id: str) -> None:
+    """Idempotent upsert of a camera's row in ``cameras``.
+
+    traffic_snapshots, bottleneck_events and incidents all carry a foreign
+    key on cameras(id), and _save_snapshot / _save_bottleneck_event /
+    _save_incident are fired as independent, unordered asyncio tasks - none
+    of them can assume another has already created the row. Calling this
+    first in each makes every insert self-sufficient instead of depending on
+    _save_snapshot happening to run first, which is what let a camera's very
+    first bottleneck reading lose its write to a foreign-key violation
+    (observed on casernes - see audit section 8).
+    """
+    cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
+    await db.execute(text("""
+        INSERT INTO cameras (id, name, latitude, longitude, capacity_pcu)
+        VALUES (:id, :name, :lat, :lng, :capacity)
+        ON CONFLICT (id) DO UPDATE
+            SET last_seen = NOW(), capacity_pcu = EXCLUDED.capacity_pcu
+    """), {
+        "id":       camera_id,
+        "name":     cam.get("name", camera_id),
+        "lat":      cam.get("lat"),
+        "lng":      cam.get("lng"),
+        "capacity": capacity_for(camera_id),
+    })
+
+
 async def _save_snapshot(camera_id: str, result: dict) -> None:
     """Persist a detection result to traffic_snapshots (best-effort, non-blocking)."""
     if not DB_AVAILABLE or _AsyncSession is None:
         return
     try:
-        cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
         async with _AsyncSession() as db:
-            await db.execute(text("""
-                INSERT INTO cameras (id, name, latitude, longitude, capacity_pcu)
-                VALUES (:id, :name, :lat, :lng, :capacity)
-                ON CONFLICT (id) DO UPDATE
-                    SET last_seen = NOW(), capacity_pcu = EXCLUDED.capacity_pcu
-            """), {
-                "id":       camera_id,
-                "name":     cam.get("name", camera_id),
-                "lat":      cam.get("lat"),
-                "lng":      cam.get("lng"),
-                "capacity": capacity_for(camera_id),
-            })
+            await _upsert_camera(db, camera_id)
             await db.execute(text("""
                 INSERT INTO traffic_snapshots
                     (id, camera_id, snapshot_time, vehicle_count, pcu, saturation,
@@ -211,6 +226,7 @@ async def _save_bottleneck_event(camera_id: str, result: dict) -> None:
     try:
         cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
         async with _AsyncSession() as db:
+            await _upsert_camera(db, camera_id)
             await db.execute(text("""
                 INSERT INTO bottleneck_events
                     (id, camera_id, detected_at, severity, vehicle_count,
@@ -241,6 +257,7 @@ async def _save_incident(inc) -> None:
         return
     try:
         async with _AsyncSession() as db:
+            await _upsert_camera(db, inc.camera_id)
             await db.execute(text("""
                 INSERT INTO incidents
                     (id, camera_id, type, severity, confidence, vehicle_count,
