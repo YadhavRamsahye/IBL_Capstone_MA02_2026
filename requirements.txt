@@ -12,9 +12,10 @@ itsdangerous==2.2.0
 
 # Auth and persistence. These were imported by the code but absent from this
 # file, so a fresh checkout failed at import with ModuleNotFoundError.
-bcrypt
-sqlalchemy[asyncio]
-asyncpg
+# Versions pinned to what was verified working on Python 3.14.6.
+bcrypt==5.0.0
+sqlalchemy[asyncio]==2.0.51
+asyncpg==0.31.0
 greenlet          # required by SQLAlchemy's asyncio support
 
 # Optional: public tunnel for mobile testing (tunnel.py)
@@ -31,9 +32,3 @@ imageio-ffmpeg
 anthropic
 google-genai      # Gemini backend (SUMMARY_PROVIDER=gemini)
 python-dotenv
-
-# Database layer: main.py imports sqlalchemy directly, database.py connects
-# through the asyncpg driver, and seed_users.py hashes passwords with bcrypt.
-sqlalchemy[asyncio]==2.0.51
-asyncpg==0.31.0
-bcrypt==5.0.0
