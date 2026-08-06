@@ -759,96 +759,94 @@ function incidentBadgeHtml(det) {
     return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
 }
 
-// ── Live camera thumbnail ─────────────────────────────────────────────────────
-// GET /api/cameras/{id}/frame.jpg returns the latest annotated frame (boxes
-// already drawn). Polled only while a camera's popup is open - not on a fixed
-// background timer - since it is a real ffmpeg+YOLO frame per request and 38
-// cameras' worth of unwatched popups polling it would cost real CPU for
-// nothing anyone is looking at.
-const FRAME_POLL_MS = 2000;
-const framePollers = {};      // camera_id -> interval handle
-const frameBlobUrls = {};     // camera_id -> current object URL, for revocation
+// ── Live camera streaming (MJPEG) ─────────────────────────────────────────────
+// GET /api/cameras/{id}/stream.mjpg is a standard multipart/x-mixed-replace
+// stream - a plain <img src="…"> renders it continuously with zero JS polling
+// loop. This replaced an earlier version that fetched frame.jpg on a client
+// timer: same underlying data (a new annotated frame exists once per
+// detection cycle, ~2s, either way - this doesn't create frames faster than
+// that), but polling meant every frame paid a full request/blob/swap round
+// trip and flashed back to the placeholder in between, which is what made it
+// look like a slow slideshow rather than a feed. The native multipart stream
+// removes all of that: each new frame lands the instant it's ready.
+const activeStreams = {};   // img element id -> { camId, phId, liveId }, for visibilitychange
+
+function _streamUrl(camId) {
+    return `${API_BASE}/api/cameras/${camId}/stream.mjpg?t=${Date.now()}`;
+}
+
+function connectStream(imgId, phId, liveId, camId) {
+    const img = document.getElementById(imgId);
+    if (!img) return;
+    const ph   = phId   ? document.getElementById(phId)   : null;
+    const live = liveId ? document.getElementById(liveId) : null;
+
+    img.onload = () => {
+        img.style.display = 'block';
+        if (ph)   ph.style.display = 'none';
+        if (live) live.style.display = 'inline-block';
+    };
+    img.onerror = () => {
+        img.style.display = 'none';
+        if (live) live.style.display = 'none';
+        if (ph) { ph.style.display = 'flex'; ph.textContent = 'No footage yet'; }
+    };
+    img.src = _streamUrl(camId);
+    activeStreams[imgId] = { camId, phId, liveId };
+}
+
+function disconnectStream(imgId) {
+    const img = document.getElementById(imgId);
+    if (img) { img.onload = null; img.onerror = null; img.src = ''; }
+    delete activeStreams[imgId];
+}
+
+// Tab hidden: drop every open stream connection (no point holding it open
+// server-side for a tab nobody's looking at). Tab visible again: reconnect
+// everything that was active, fresh - a stale multipart connection doesn't
+// reliably resume on its own.
+document.addEventListener('visibilitychange', () => {
+    for (const [imgId, meta] of Object.entries(activeStreams)) {
+        const img = document.getElementById(imgId);
+        if (!img) continue;
+        img.src = document.hidden ? '' : _streamUrl(meta.camId);
+    }
+});
 
 function cameraFrameHtml(id) {
     return `
         <div style="margin-bottom:8px;">
-            <img id="popFrame_${id}" style="width:100%;aspect-ratio:16/9;object-fit:cover;
-                border-radius:6px;background:#000;display:none;" />
-            <div id="popFramePh_${id}" style="width:100%;aspect-ratio:16/9;background:#1c2128;
-                border:1px solid #30363d;border-radius:6px;display:flex;align-items:center;
-                justify-content:center;color:#5a6675;font-size:11px;text-align:center;padding:8px;">
-                Loading feed…
+            <div style="position:relative;width:100%;aspect-ratio:16/9;background:#1c2128;
+                border:1px solid #30363d;border-radius:6px;overflow:hidden;">
+                <img id="popFrame_${id}" style="width:100%;height:100%;object-fit:cover;display:none;" />
+                <div id="popFramePh_${id}" style="position:absolute;inset:0;display:flex;
+                    align-items:center;justify-content:center;color:#5a6675;font-size:11px;
+                    text-align:center;padding:8px;">
+                    Loading feed…
+                </div>
+                <div id="popFrameLive_${id}" style="display:none;position:absolute;top:5px;right:5px;
+                    background:rgba(0,0,0,.6);color:#e94560;font-size:9px;font-weight:700;
+                    padding:2px 7px;border-radius:10px;letter-spacing:.3px;">
+                    ● LIVE
+                </div>
             </div>
-            <div id="popFrameAge_${id}" style="font-size:10px;color:#8891a0;margin-top:3px;"></div>
         </div>`;
 }
 
-function showFramePlaceholder(id, text) {
-    const img = document.getElementById(`popFrame_${id}`);
-    const ph  = document.getElementById(`popFramePh_${id}`);
-    if (img) img.style.display = 'none';
-    if (ph)  { ph.style.display = 'flex'; ph.textContent = text; }
-}
-
-async function refreshFrame(id) {
-    const img = document.getElementById(`popFrame_${id}`);
-    if (!img) { stopFramePolling(id); return; }   // popup no longer in the DOM
-
-    try {
-        const res = await fetch(`${API_BASE}/api/cameras/${id}/frame.jpg?t=${Date.now()}`);
-        if (res.status === 404) { showFramePlaceholder(id, 'No footage captured yet'); return; }
-        if (!res.ok)            { showFramePlaceholder(id, 'Feed unavailable');        return; }
-
-        const ageHeader = res.headers.get('X-Frame-Age-Seconds');
-        const blob = await res.blob();
-        const url  = URL.createObjectURL(blob);
-        const prevUrl = frameBlobUrls[id];
-
-        img.src = url;
-        img.style.display = 'block';
-        const ph = document.getElementById(`popFramePh_${id}`);
-        if (ph) ph.style.display = 'none';
-        frameBlobUrls[id] = url;
-        if (prevUrl) URL.revokeObjectURL(prevUrl);   // release the previous frame's memory
-
-        const ageEl = document.getElementById(`popFrameAge_${id}`);
-        if (ageEl) {
-            const age = ageHeader ? Math.round(parseFloat(ageHeader)) : null;
-            ageEl.textContent = age == null ? '' : `Updated ${age}s ago`;
-        }
-    } catch (_) {
-        showFramePlaceholder(id, 'Feed unavailable');
-    }
-}
-
-function startFramePolling(id) {
-    stopFramePolling(id);
-    refreshFrame(id);
-    framePollers[id] = setInterval(() => {
-        if (!document.hidden) refreshFrame(id);   // paused while the tab is hidden
-    }, FRAME_POLL_MS);
+function startFramePolling(id) {   // name kept - called from popupopen/popupclose below
+    connectStream(`popFrame_${id}`, `popFramePh_${id}`, `popFrameLive_${id}`, id);
 }
 
 function stopFramePolling(id) {
-    if (framePollers[id]) { clearInterval(framePollers[id]); delete framePollers[id]; }
-    if (frameBlobUrls[id]) { URL.revokeObjectURL(frameBlobUrls[id]); delete frameBlobUrls[id]; }
+    disconnectStream(`popFrame_${id}`);
 }
 
-// Tab regains visibility: refresh whatever's currently polling immediately
-// rather than waiting up to FRAME_POLL_MS for the next tick.
-document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) Object.keys(framePollers).forEach(refreshFrame);
-});
-
 // ── Camera overview strip ─────────────────────────────────────────────────────
-// Always-visible filmstrip, independent of any popup being open. This costs
+// Always-visible filmstrip, independent of any popup being open. Costs
 // nothing extra server-side: the annotated frame is encoded once per
-// detection cycle regardless of who is watching (measured at ~4ms, ~0.4% of
-// YOLOv8m's own inference time), and every poller - popup or strip - just
-// reads the same cached bytes.
-const STRIP_POLL_MS = 3000;
-let stripPoller = null;
-
+// detection cycle regardless of who's watching (measured at ~4ms, ~0.4% of
+// YOLOv8m's own inference time), and every stream - popup or strip - reads
+// the same cached bytes.
 function buildCameraStrip() {
     const strip = document.getElementById('cameraStrip');
     if (!strip || strip.dataset.built) return;
@@ -872,9 +870,9 @@ function buildCameraStrip() {
     strip.innerHTML = html;
     strip.dataset.built = '1';
 
-    refreshStrip();
-    if (!stripPoller) {
-        stripPoller = setInterval(() => { if (!document.hidden) refreshStrip(); }, STRIP_POLL_MS);
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (loc.monitored === false) continue;
+        connectStream(`stripImg_${id}`, `stripPh_${id}`, null, id);
     }
 }
 
@@ -883,37 +881,6 @@ function focusCamera(id) {
     if (!loc) return;
     flyTo(loc.coords[0], loc.coords[1], 16);
     cameraMarkers[id]?.openPopup();
-}
-
-async function refreshStripFrame(id) {
-    const img = document.getElementById(`stripImg_${id}`);
-    const ph  = document.getElementById(`stripPh_${id}`);
-    if (!img) return;   // strip not built yet, or camera dropped
-    try {
-        const res = await fetch(`${API_BASE}/api/cameras/${id}/frame.jpg?t=${Date.now()}`);
-        if (res.status === 404) {
-            img.style.display = 'none';
-            if (ph) { ph.style.display = 'flex'; ph.textContent = 'No footage yet'; }
-            return;
-        }
-        if (!res.ok) return;
-
-        const blob = await res.blob();
-        const url  = URL.createObjectURL(blob);
-        const prev = img.dataset.blobUrl;
-        img.src = url;
-        img.dataset.blobUrl = url;
-        img.style.display = 'block';
-        if (ph) ph.style.display = 'none';
-        if (prev) URL.revokeObjectURL(prev);
-    } catch (_) {}
-}
-
-function refreshStrip() {
-    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
-        if (loc.monitored === false) continue;
-        refreshStripFrame(id);
-    }
 }
 
 function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {

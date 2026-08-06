@@ -18,7 +18,7 @@ from urllib.parse import quote_plus
 
 from fastapi import FastAPI, HTTPException, Request, Form, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -1033,6 +1033,66 @@ async def api_camera_frame(camera_id: str):
             "Cache-Control": "no-store",
             "X-Frame-Age-Seconds": f"{age_seconds:.1f}",
         },
+    )
+
+
+_MJPEG_BOUNDARY = "frame"
+_MJPEG_POLL_S = 0.2   # how often to check for a newer cached frame, not a real fps
+
+
+async def _mjpeg_frames(camera_id: str):
+    """Yield multipart/x-mixed-replace parts as new frames become available.
+
+    A new annotated frame only exists once per detection cycle
+    (FRAME_INTERVAL, ~2s) - this doesn't create data faster than that. What it
+    removes is everything *around* the data: the per-frame HTTP request/
+    response round trip, the JS fetch-then-blob-then-swap sequence, and the
+    brief flash back to a placeholder between polls that made the polled
+    version (GET .../frame.jpg on a client timer) look like a slideshow.
+    A plain <img src="this URL"> renders a standard MJPEG stream natively -
+    no client-side polling code at all - so each new frame lands the moment
+    it exists rather than up to one poll interval later.
+    """
+    last_sent_at = None
+    try:
+        while True:
+            stored = get_latest_frame(camera_id)
+            if stored is not None:
+                jpeg_bytes, captured_at = stored
+                if captured_at != last_sent_at:
+                    last_sent_at = captured_at
+                    yield (
+                        f"--{_MJPEG_BOUNDARY}\r\n"
+                        f"Content-Type: image/jpeg\r\n"
+                        f"Content-Length: {len(jpeg_bytes)}\r\n\r\n"
+                    ).encode() + jpeg_bytes + b"\r\n"
+            await asyncio.sleep(_MJPEG_POLL_S)
+    except asyncio.CancelledError:
+        # Normal shutdown path - the client closed the <img> connection
+        # (popup closed, tab navigated away). Nothing to clean up: this
+        # generator holds no resources beyond its own local variables.
+        return
+
+
+@app.get("/api/cameras/{camera_id}/stream.mjpg", dependencies=[Depends(require_user)])
+async def api_camera_stream(camera_id: str):
+    """Live MJPEG stream of the annotated frame - boxes already drawn.
+
+    Same auth, same data source as frame.jpg. Point a plain <img> tag at this
+    URL and the browser handles continuous replacement on its own; no JS
+    polling loop needed. 404s up front if the camera has never produced a
+    frame, matching frame.jpg, rather than opening a stream that would never
+    send anything.
+    """
+    if get_latest_frame(camera_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No frame captured yet for camera '{camera_id}'.",
+        )
+    return StreamingResponse(
+        _mjpeg_frames(camera_id),
+        media_type=f"multipart/x-mixed-replace; boundary={_MJPEG_BOUNDARY}",
+        headers={"Cache-Control": "no-store"},
     )
 
 
