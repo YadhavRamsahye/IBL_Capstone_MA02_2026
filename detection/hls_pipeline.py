@@ -233,8 +233,23 @@ def _detect_loop(
     tracker = StationaryTracker(frame_interval=FRAME_INTERVAL)
     consecutive_failures = 0
 
+    # Real loop cadence, measured rather than assumed. FRAME_INTERVAL=2.0s is
+    # a target, not a guarantee: grab+inference alone was measured at ~2.3s on
+    # this deployment (2026-08-07 incident-detection audit), already exceeding
+    # the nominal interval, so "sleep the remainder" below contributes ~0 most
+    # iterations. StationaryTracker converts STALL_SECONDS_REQUIRED into a
+    # frame count using frame_interval - if that's wrong, so is the real-world
+    # wait, so it's kept current from a rolling median of actual loop starts
+    # rather than left at the nominal constant.
+    cadence_window: deque[float] = deque(maxlen=10)
+    prev_t_start: float | None = None
+
     while True:
         t_start = time.perf_counter()
+        if prev_t_start is not None:
+            cadence_window.append(t_start - prev_t_start)
+            tracker.frame_interval = statistics.median(cadence_window)
+        prev_t_start = t_start
 
         frame = _grab_single_frame(hls_urls, width, height)
 
@@ -249,11 +264,11 @@ def _detect_loop(
                     f"[{camera_id}] {MAX_CONSECUTIVE_FAILURES} consecutive frame grabs "
                     "failed — stream appears unavailable."
                 )
-            # A gap in the stream breaks track continuity: after it, a different
-            # vehicle may occupy the same pixels and be matched as the same one
-            # "not moving". Discard the tracks rather than trust them.
-            if consecutive_failures >= 2:
-                tracker.reset()
+            # A missed grab gets the same per-track grace period as a frame
+            # that was grabbed but produced no matching detection, rather than
+            # wiping every track's progress outright - see
+            # StationaryTracker.mark_missed().
+            tracker.mark_missed()
             time.sleep(FRAME_INTERVAL)
             continue
 

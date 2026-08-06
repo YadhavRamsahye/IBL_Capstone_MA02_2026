@@ -20,11 +20,45 @@ a single coincidental frame flipped the badge on.
 
 What this does instead
 ----------------------
-Associates boxes between frames by IoU so "stationary" means *this* vehicle did
-not move, then requires that condition to hold for longer than a traffic-light
-cycle before reporting anything.  A red light stops traffic for 30-120s; an
-incident blocks it for far longer.  Duration is the only signal available at
-0.5 fps that separates the two, so it is the one this leans on.
+Associates boxes between frames by IoU (matching identity — "is this the same
+vehicle") and separately measures whether that vehicle moved by normalised
+centroid displacement (its own box diagonal, not IoU, not raw pixels — see
+2026-08-07 below), then requires "did not move" to hold for a sustained
+period before reporting anything.
+
+2026-08-07 recalibration
+-------------------------
+An incident-detection audit found this tracker correctly wired into every
+frame yet its verdict had never once fired across 42,975 recorded snapshots.
+Three real problems, found with tools/incident_harness.py rather than
+guessed:
+
+* STATIONARY_IOU=0.85 measured "did not move" as box-overlap, which
+  penalises ordinary YOLO box-size jitter as much as real displacement — an
+  8% shrink/grow on a re-detection reads as "moved" even at zero centroid
+  displacement. Replaced with centroid displacement normalised by the box's
+  own diagonal, which is insensitive to the box's size wobbling.
+* A single non-stationary reading reset the whole streak to zero, so one
+  flickered detection undid minutes of real accumulated stillness. Now
+  decrements by MISMATCH_PENALTY instead.
+* STALL_SECONDS_REQUIRED was tuned against the nominal 2.0s FRAME_INTERVAL;
+  the real measured loop cadence on this deployment is closer to 2.3s
+  (grab+inference alone routinely exceeds the nominal interval, so the
+  "sleep the remainder" step contributes ~0). hls_pipeline.py now measures
+  its own real cadence and updates frame_interval on this tracker directly,
+  rather than trusting the constant.
+
+STATIONARY_CENTROID_FRAC below is still provisional: live footage during
+this recalibration was empty, rainy-night streets on every covered camera —
+no genuinely stationary vehicle was available to sample. What *is* measured
+is a floor: identical input frames (confirmed via the HLS segment's ~10-11s
+refresh interval — polling faster than that re-decodes the same segment,
+see incident_harness.py's --gap warning) produce byte-identical detection
+boxes, so YOLO's own regression contributes zero jitter on truly unchanged
+pixels. Real jitter comes from genuinely different frames of the same
+physical vehicle, which needs daytime traffic to sample. Re-run
+`python tools/incident_harness.py measure --camera <id> --gap 11` next time
+real stopped traffic is visible, and tighten this from the printed p90.
 
 This cannot make incident detection certain — a long light, a stalled delivery
 van, and a collision are genuinely indistinguishable from bounding boxes alone.
@@ -43,20 +77,37 @@ Public API
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
 # Association: boxes overlapping by at least this are treated as the same vehicle.
 MATCH_IOU = 0.30
 
-# A matched vehicle counts as "not moving" when its box barely shifted. At 0.5
-# fps a vehicle in motion moves far more than this between frames.
-STATIONARY_IOU = 0.85
+# A matched vehicle counts as "not moving" when its centre shifted less than
+# this fraction of its own box diagonal between frames. Normalised so a near
+# (large-box) and distant (small-box) vehicle are held to the same real-world
+# standard, and so ordinary box-size jitter (regression noise on width/height,
+# not position) doesn't read as movement the way an IoU threshold did.
+# PROVISIONAL — not yet measured against a real stationary vehicle; see the
+# 2026-08-07 note in the module docstring and tools/incident_harness.py.
+STATIONARY_CENTROID_FRAC = 0.04
 
-# How long the stop must persist. Must exceed the longest normal traffic-light
-# cycle at the site or every red light reads as an incident. Mauritius signals
-# run up to ~120s, so this is deliberately above that.
-STALL_SECONDS_REQUIRED = 150.0
+# A non-stationary reading costs the streak this many frames rather than
+# zeroing it outright, so one flickered detection doesn't erase minutes of
+# real accumulated stillness. Still net-negative on genuine movement, which
+# is non-stationary every single frame.
+MISMATCH_PENALTY = 1
+
+# How long the stop must persist. The original 150s was deliberately above
+# Mauritius' ~120s longest signal cycle so a red light could never read as an
+# incident on duration alone. Lowered to 60s on 2026-08-07 so the capability
+# is demonstrable without a 2.5-minute wait - this reopens that false-positive
+# risk on a long red light; MIN_STATIONARY_VEHICLES/MIN_STATIONARY_FRACTION
+# below don't distinguish "everyone stopped at a light" from "everyone
+# stopped behind a crash" either, so a long cycle at a busy signal can still
+# raise a false stalled_vehicle incident until this trade-off is revisited.
+STALL_SECONDS_REQUIRED = 60.0
 
 # A stop is only interesting if it involves a queue, not one parked car.
 MIN_STATIONARY_VEHICLES = 4
@@ -218,9 +269,29 @@ class StationaryTracker:
         return [t for t in self._tracks if t.missed_frames == 0]
 
     def reset(self) -> None:
-        """Drop all state — call when a stream reconnects and continuity breaks."""
+        """Drop all state — call when a stream reconnects and continuity breaks
+        (e.g. a fresh outer retry in hls_pipeline.run_hls_pipeline, which
+        constructs a new tracker anyway; kept for callers that don't)."""
         self._tracks.clear()
         self._confirmed_frames = 0
+
+    def mark_missed(self) -> None:
+        """Advance every track's missed-frame counter with no new detections,
+        for a frame that could not be grabbed at all.
+
+        Uses the same MAX_MISSED_FRAMES grace period _associate() already
+        gives a track that simply wasn't matched this frame, rather than
+        wiping every vehicle's progress on a brief grab failure - a single
+        HLS hiccup used to reset() the whole tracker after just two failed
+        grabs, discarding a stall that had been building for two minutes
+        over one dropped frame.
+        """
+        survivors = []
+        for track in self._tracks:
+            track.missed_frames += 1
+            if track.missed_frames <= MAX_MISSED_FRAMES:
+                survivors.append(track)
+        self._tracks = survivors
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
@@ -245,9 +316,17 @@ class StationaryTracker:
             unmatched_tracks.remove(best)
             best.age_frames += 1
             # Compare against the box the track held *before* this update, so
-            # "stationary" measures actual displacement.
+            # "stationary" measures actual displacement - normalised by the
+            # box's own diagonal so it isn't fooled by ordinary regression
+            # jitter on width/height (see STATIONARY_CENTROID_FRAC above).
+            prev_centre = centre_of(best.box)
+            new_centre  = centre_of(box)
+            diagonal    = math.hypot(best.box[2] - best.box[0], best.box[3] - best.box[1])
+            disp_frac   = math.hypot(new_centre[0] - prev_centre[0],
+                                     new_centre[1] - prev_centre[1]) / max(1.0, diagonal)
             best.stationary_frames = (
-                best.stationary_frames + 1 if iou(best.box, box) >= STATIONARY_IOU else 0
+                best.stationary_frames + 1 if disp_frac <= STATIONARY_CENTROID_FRAC
+                else max(0, best.stationary_frames - MISMATCH_PENALTY)
             )
             best.box = list(box)
             best.cls_id = cls_id
