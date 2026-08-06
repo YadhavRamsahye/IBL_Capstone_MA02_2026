@@ -651,6 +651,9 @@ async function fetchCameras() {
             cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
                 .addTo(map)
                 .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
+            // Thumbnail only polls while this camera's popup is actually open.
+            cameraMarkers[id].on('popupopen',  () => startFramePolling(id));
+            cameraMarkers[id].on('popupclose', () => stopFramePolling(id));
         }
     }
     const note = document.getElementById('cameraCoverage');
@@ -719,11 +722,93 @@ function incidentBadgeHtml(det) {
     return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
 }
 
+// ── Live camera thumbnail ─────────────────────────────────────────────────────
+// GET /api/cameras/{id}/frame.jpg returns the latest annotated frame (boxes
+// already drawn). Polled only while a camera's popup is open - not on a fixed
+// background timer - since it is a real ffmpeg+YOLO frame per request and 38
+// cameras' worth of unwatched popups polling it would cost real CPU for
+// nothing anyone is looking at.
+const FRAME_POLL_MS = 2000;
+const framePollers = {};      // camera_id -> interval handle
+const frameBlobUrls = {};     // camera_id -> current object URL, for revocation
+
+function cameraFrameHtml(id) {
+    return `
+        <div style="margin-bottom:8px;">
+            <img id="popFrame_${id}" style="width:100%;aspect-ratio:16/9;object-fit:cover;
+                border-radius:6px;background:#000;display:none;" />
+            <div id="popFramePh_${id}" style="width:100%;aspect-ratio:16/9;background:#1c2128;
+                border:1px solid #30363d;border-radius:6px;display:flex;align-items:center;
+                justify-content:center;color:#5a6675;font-size:11px;text-align:center;padding:8px;">
+                Loading feed…
+            </div>
+            <div id="popFrameAge_${id}" style="font-size:10px;color:#8891a0;margin-top:3px;"></div>
+        </div>`;
+}
+
+function showFramePlaceholder(id, text) {
+    const img = document.getElementById(`popFrame_${id}`);
+    const ph  = document.getElementById(`popFramePh_${id}`);
+    if (img) img.style.display = 'none';
+    if (ph)  { ph.style.display = 'flex'; ph.textContent = text; }
+}
+
+async function refreshFrame(id) {
+    const img = document.getElementById(`popFrame_${id}`);
+    if (!img) { stopFramePolling(id); return; }   // popup no longer in the DOM
+
+    try {
+        const res = await fetch(`${API_BASE}/api/cameras/${id}/frame.jpg?t=${Date.now()}`);
+        if (res.status === 404) { showFramePlaceholder(id, 'No footage captured yet'); return; }
+        if (!res.ok)            { showFramePlaceholder(id, 'Feed unavailable');        return; }
+
+        const ageHeader = res.headers.get('X-Frame-Age-Seconds');
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const prevUrl = frameBlobUrls[id];
+
+        img.src = url;
+        img.style.display = 'block';
+        const ph = document.getElementById(`popFramePh_${id}`);
+        if (ph) ph.style.display = 'none';
+        frameBlobUrls[id] = url;
+        if (prevUrl) URL.revokeObjectURL(prevUrl);   // release the previous frame's memory
+
+        const ageEl = document.getElementById(`popFrameAge_${id}`);
+        if (ageEl) {
+            const age = ageHeader ? Math.round(parseFloat(ageHeader)) : null;
+            ageEl.textContent = age == null ? '' : `Updated ${age}s ago`;
+        }
+    } catch (_) {
+        showFramePlaceholder(id, 'Feed unavailable');
+    }
+}
+
+function startFramePolling(id) {
+    stopFramePolling(id);
+    refreshFrame(id);
+    framePollers[id] = setInterval(() => {
+        if (!document.hidden) refreshFrame(id);   // paused while the tab is hidden
+    }, FRAME_POLL_MS);
+}
+
+function stopFramePolling(id) {
+    if (framePollers[id]) { clearInterval(framePollers[id]); delete framePollers[id]; }
+    if (frameBlobUrls[id]) { URL.revokeObjectURL(frameBlobUrls[id]); delete frameBlobUrls[id]; }
+}
+
+// Tab regains visibility: refresh whatever's currently polling immediately
+// rather than waiting up to FRAME_POLL_MS for the next tick.
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) Object.keys(framePollers).forEach(refreshFrame);
+});
+
 function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
     const incidentBadge = incidentBadgeHtml(det);
     return `
         <div style="min-width:200px;font-family:Segoe UI,sans-serif;">
             <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
+            ${cameraFrameHtml(id)}
             <div id="popSev_${id}" style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
             <div id="popBadge_${id}">${incidentBadge}</div>
             <table style="font-size:12px;color:#555;width:100%;">
