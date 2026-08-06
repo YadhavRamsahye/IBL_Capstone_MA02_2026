@@ -1,131 +1,92 @@
 """
+run_schema.py
+Create the TrafficSystem database and apply schema.sql to it.
+
 Author : Mokshan Mehess (22703417) — Document Lead
 Unit   : ISAD3000 Capstone Computing Project 1
 Team   : IBL Group — Traffic Bottleneck Detection System
+
+This script used to carry its own inline copy of the DDL, which had drifted from
+schema.sql — different column names, different quoting — so the schema you ended
+up with depended on which file you ran. schema.sql is now the only definition
+and this script simply executes it.
+
+Credentials come from the same environment variables as database.py so there is
+one place to configure them:
+
+    DB_HOST  DB_PORT  DB_USER  DB_PASSWORD  DB_NAME
+
+Usage:  python run_schema.py
 """
 
-# run_schema.py
 import asyncio
+import os
+import pathlib
+import sys
+
 import asyncpg
+from dotenv import load_dotenv
 
-HOST     = "localhost"
-PORT     = 5432
-USER     = "postgres"
-PASSWORD = "tqu9vfds"   # ← only change this
-DB_NAME  = "TrafficSystem"
+load_dotenv()
 
-async def run():
-    # Step 1 — create database if not exists
-    conn = await asyncpg.connect(host=HOST, port=PORT, user=USER, password=PASSWORD, database="postgres")
-    exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = 'TrafficSystem'")
-    if not exists:
-        await conn.execute('CREATE DATABASE "TrafficSystem"')
-        print("Database created.")
-    else:
-        print("Database already exists.")
-    await conn.close()
+HOST     = os.getenv("DB_HOST", "localhost")
+PORT     = int(os.getenv("DB_PORT", "5432"))
+USER     = os.getenv("DB_USER", "postgres")
+PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME  = os.getenv("DB_NAME", "trafficsystem")
 
-    # Step 2 — connect to TrafficSystem
-    conn = await asyncpg.connect(host=HOST, port=PORT, user=USER, password=PASSWORD, database=DB_NAME)
+SCHEMA_FILE = pathlib.Path(__file__).with_name("schema.sql")
 
-    # Create enums (skip if already exists)
-    for stmt in [
-        "CREATE TYPE \"UserRole\" AS ENUM ('admin', 'user')",
-        "CREATE TYPE \"BottleneckSeverity\" AS ENUM ('free', 'moderate', 'heavy', 'bottleneck')",
-    ]:
-        try:
-            await conn.execute(stmt)
-            print(f"Created type.")
-        except Exception:
-            print(f"Type already exists, skipping.")
 
-    # Create each table one by one
-    tables = [
-        (
-            "users",
-            """CREATE TABLE IF NOT EXISTS users (
-                id UUID PRIMARY KEY,
-                username VARCHAR(50) UNIQUE NOT NULL,
-                "PasswordHash" TEXT NOT NULL,
-                role "UserRole" NOT NULL DEFAULT 'user',
-                "CreatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                "LastLogin" TIMESTAMPTZ
-            )"""
-        ),
-        (
-            "cameras",
-            """CREATE TABLE IF NOT EXISTS cameras (
-                id VARCHAR(50) PRIMARY KEY,
-                name VARCHAR(100) NOT NULL,
-                latitude FLOAT,
-                longitude FLOAT,
-                "StreamUrl" TEXT,
-                "isActive" BOOLEAN NOT NULL DEFAULT TRUE,
-                "RegisteredAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                "LastSeen" TIMESTAMPTZ
-            )"""
-        ),
-        (
-            "TrafficSnapshots",
-            """CREATE TABLE IF NOT EXISTS "TrafficSnapshots" (
-                id UUID PRIMARY KEY,
-                "CameraId" VARCHAR(50) NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
-                "SnapshotTime" TIMESTAMPTZ NOT NULL,
-                "VehicleCount" INTEGER,
-                "Severity" VARCHAR(20),
-                "fpsProcessed" FLOAT,
-                "FrameShape" INTEGER[],
-                "RawResult" JSONB
-            )"""
-        ),
-        (
-            "BottleneckEvents",
-            """CREATE TABLE IF NOT EXISTS "BottleneckEvents" (
-                id UUID PRIMARY KEY,
-                "CameraId" VARCHAR(50) NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
-                "DetectedAt" TIMESTAMPTZ NOT NULL,
-                "Severity" "BottleneckSeverity" NOT NULL,
-                "VehicleCount" INTEGER,
-                "Color" VARCHAR(10),
-                latitude FLOAT,
-                longitude FLOAT
-            )"""
-        ),
-        (
-            "alerts",
-            """CREATE TABLE IF NOT EXISTS alerts (
-                id SERIAL PRIMARY KEY,
-                "CameraId" VARCHAR(50) NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
-                "EventId" UUID NOT NULL REFERENCES "BottleneckEvents"(id) ON DELETE CASCADE,
-                "AlertType" VARCHAR(50) NOT NULL,
-                "Severity" VARCHAR(20),
-                "Message" TEXT,
-                "TriggeredAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                acknowledged BOOLEAN NOT NULL DEFAULT FALSE
-            )"""
-        ),
-        (
-            "AuditLog",
-            """CREATE TABLE IF NOT EXISTS "AuditLog" (
-                id SERIAL PRIMARY KEY,
-                "userId" UUID REFERENCES users(id) ON DELETE SET NULL,
-                action VARCHAR(100) NOT NULL,
-                target VARCHAR(100),
-                "IPAddress" INET,
-                "PerformedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                success BOOLEAN NOT NULL
-            )"""
-        ),
-    ]
+async def run() -> None:
+    if not PASSWORD:
+        sys.exit(
+            "DB_PASSWORD is not set. Add it to your .env file:\n"
+            "    DB_PASSWORD=your-postgres-password"
+        )
 
-    for name, stmt in tables:
-        try:
-            await conn.execute(stmt)
-            print(f"Table '{name}' created.")
-        except Exception as e:
-            print(f"Table '{name}' error: {e}")
+    if not SCHEMA_FILE.exists():
+        sys.exit(f"schema.sql not found next to {__file__}")
 
-    await conn.close()
-    print("\nSchema done!")
+    # Step 1 — create the database if it does not exist. CREATE DATABASE cannot
+    # run inside a transaction, so it needs its own connection to `postgres`.
+    conn = await asyncpg.connect(
+        host=HOST, port=PORT, user=USER, password=PASSWORD, database="postgres"
+    )
+    try:
+        exists = await conn.fetchval(
+            "SELECT 1 FROM pg_database WHERE datname = $1", DB_NAME
+        )
+        if exists:
+            print(f"Database '{DB_NAME}' already exists.")
+        else:
+            # Identifier cannot be parameterised; DB_NAME is operator-supplied
+            # config, not user input, but quote it defensively anyway.
+            await conn.execute(f'CREATE DATABASE "{DB_NAME}"')
+            print(f"Database '{DB_NAME}' created.")
+    finally:
+        await conn.close()
 
-asyncio.run(run())
+    # Step 2 — apply the schema. Every statement is idempotent (IF NOT EXISTS /
+    # duplicate_object guards), so re-running this is safe.
+    conn = await asyncpg.connect(
+        host=HOST, port=PORT, user=USER, password=PASSWORD, database=DB_NAME
+    )
+    try:
+        await conn.execute(SCHEMA_FILE.read_text(encoding="utf-8"))
+        print(f"Applied {SCHEMA_FILE.name}.")
+
+        tables = await conn.fetch(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+        )
+        print("\nTables now present:")
+        for row in tables:
+            print(f"  - {row['tablename']}")
+    finally:
+        await conn.close()
+
+    print("\nSchema done. Next: python seed_users.py")
+
+
+if __name__ == "__main__":
+    asyncio.run(run())
