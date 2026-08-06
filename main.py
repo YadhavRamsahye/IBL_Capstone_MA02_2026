@@ -33,7 +33,10 @@ load_dotenv()
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from database import DB_AVAILABLE, AsyncSessionLocal as _AsyncSession
+from database import (
+    DB_AVAILABLE, AsyncSessionLocal as _AsyncSession,
+    HOST as _DB_HOST, PORT as _DB_PORT, DB_NAME as _DB_NAME,
+)
 from detection import direction
 from detection.severity import capacity_for
 from auth import (
@@ -583,6 +586,19 @@ async def _real_camera_loop(camera_id: str, source: str) -> None:
 async def lifespan(app: FastAPI):
 
     global _active_cameras
+
+    # database.py's own "[db] Engine ready" log fires at import time, before
+    # main.py's logging is configured — with no handler attached yet, Python's
+    # last-resort handler (WARNING+ only) drops that INFO-level line silently.
+    # Re-state the outcome here, now that logging is live, loud on both paths.
+    if DB_AVAILABLE:
+        logger.info("[db] Engine ready → %s:%d/%s", _DB_HOST, _DB_PORT, _DB_NAME)
+    else:
+        logger.warning(
+            "[db] Not connected — starting without persistence "
+            "(see the [db] warning above for why; check DB_HOST/DB_PORT/DB_USER/"
+            "DB_PASSWORD/DB_NAME in .env)."
+        )
 
     # Discovery runs in a thread — it is synchronous / blocking
     logger.info("Running Traffic Watch camera discovery …")
