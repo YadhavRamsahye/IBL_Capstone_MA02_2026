@@ -18,7 +18,7 @@ from urllib.parse import quote_plus
 
 from fastapi import FastAPI, HTTPException, Request, Form, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -46,7 +46,7 @@ from auth import (
 
 from detection.mock_pipeline import run_mock_pipeline
 from detection.pipeline import run_pipeline
-from detection.hls_pipeline import run_hls_pipeline
+from detection.hls_pipeline import run_hls_pipeline, get_latest_frame
 from detection import camera_catalogue
 from detection.trafficwatch import discover_cameras
 from detection.claude_api import summary_service
@@ -1005,6 +1005,35 @@ async def api_cameras(include_catalogue: bool = True):
                 "coords_precision": cam["coords_precision"],
             })
     return result
+
+
+@app.get("/api/cameras/{camera_id}/frame.jpg", dependencies=[Depends(require_user)])
+async def api_camera_frame(camera_id: str):
+    """Latest annotated JPEG frame for a live camera, boxes already drawn.
+
+    Behind the same auth as every other /api/* route — the original audit's
+    headline finding was unauthenticated API routes, and camera footage is
+    exactly the kind of thing that should not be reintroduced as one.
+
+    Mock cameras and anything not running the HLS pipeline never have a
+    stored frame, so this 404s for them rather than serving nothing useful.
+    """
+    stored = get_latest_frame(camera_id)
+    if stored is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No frame captured yet for camera '{camera_id}'.",
+        )
+    jpeg_bytes, captured_at = stored
+    age_seconds = (datetime.now(timezone.utc) - captured_at).total_seconds()
+    return Response(
+        content=jpeg_bytes,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Frame-Age-Seconds": f"{age_seconds:.1f}",
+        },
+    )
 
 
 @app.get("/api/incidents", response_class=JSONResponse, dependencies=[Depends(require_user)])

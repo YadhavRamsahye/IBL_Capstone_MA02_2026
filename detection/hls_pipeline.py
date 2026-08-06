@@ -66,6 +66,58 @@ _inference_slots = threading.Semaphore(MAX_CONCURRENT_INFERENCE)
 _model_cache: dict[str, YOLO] = {}
 _model_lock = threading.Lock()
 
+# ── Latest-frame store (live camera view) ───────────────────────────────────
+# One annotated JPEG per camera, overwritten every detection cycle - in memory
+# only, never written to disk. The repo lives in a synced OneDrive folder, and
+# a per-second file per camera there would be a mess of churn for OneDrive to
+# fight with. Bounded by design: exactly one entry per active camera.
+_FRAME_WIDTH        = int(os.getenv("FRAME_JPEG_WIDTH", "480"))
+_FRAME_JPEG_QUALITY = int(os.getenv("FRAME_JPEG_QUALITY", "70"))
+
+_latest_frames: dict[str, tuple[bytes, datetime]] = {}
+_frames_lock = threading.Lock()
+
+
+def get_latest_frame(camera_id: str) -> tuple[bytes, datetime] | None:
+    """Return (jpeg_bytes, captured_at_utc) for camera_id, or None if none yet."""
+    with _frames_lock:
+        return _latest_frames.get(camera_id)
+
+
+def _store_annotated_frame(
+    camera_id: str,
+    frame: np.ndarray,
+    boxes: list,
+    classes: list,
+) -> None:
+    """Draw detection boxes on *frame*, downscale, JPEG-encode, and cache it.
+
+    Reuses the boxes/classes already computed for counting - no extra
+    inference, just drawing and encoding.
+    """
+    annotated = frame.copy()
+    for (x1, y1, x2, y2), cls_id in zip(boxes, classes):
+        cv2.rectangle(
+            annotated, (int(x1), int(y1)), (int(x2), int(y2)), (0, 220, 0), 2
+        )
+
+    h, w = annotated.shape[:2]
+    if w > _FRAME_WIDTH:
+        scale = _FRAME_WIDTH / w
+        annotated = cv2.resize(
+            annotated, (_FRAME_WIDTH, int(h * scale)), interpolation=cv2.INTER_AREA
+        )
+
+    ok, buf = cv2.imencode(
+        ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, _FRAME_JPEG_QUALITY]
+    )
+    if not ok:
+        logger.warning("[%s] JPEG encode failed — skipping frame cache update.", camera_id)
+        return
+
+    with _frames_lock:
+        _latest_frames[camera_id] = (buf.tobytes(), datetime.now(timezone.utc))
+
 
 SINGLE_FRAME_TIMEOUT = int(os.getenv("FRAME_TIMEOUT", "20"))
 MAX_CONSECUTIVE_FAILURES = 5        # consecutive None grabs before raising to retry loop
@@ -243,6 +295,8 @@ def _detect_loop(
                     raw_count += 1
                     vehicle_boxes.append(xyxy_list[i])
                     vehicle_classes.append(int(cls_id))
+
+        _store_annotated_frame(camera_id, frame, vehicle_boxes, vehicle_classes)
 
         # Rolling-median smoothing on both the raw count and the PCU load. PCU
         # is what drives severity: a bus occupies roughly 3 cars' worth of road,
