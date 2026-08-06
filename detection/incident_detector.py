@@ -53,6 +53,7 @@ _TYPE_META: dict[str, dict] = {
     "rapid_buildup":        {"label": "Rapid Traffic Buildup", "color": "#f0883e"},
     "camera_freeze":        {"label": "Camera Offline",        "color": "#5a7a9a"},
     "night_low_visibility": {"label": "Night Low Visibility",  "color": "#f59e0b"},
+    "stalled_vehicle":      {"label": "Stalled Traffic",       "color": "#e94560"},
 }
 
 _CAMERA_DISPLAY: dict[str, str] = {
@@ -74,6 +75,11 @@ class _Reading:
     count: int
     severity: str
     timestamp: datetime
+    # detection/stationary_tracker.py's Verdict.to_dict(), when the caller has
+    # one. None for callers that don't track individual vehicles (tests, the
+    # mock pipeline) - _check_stalled_vehicle treats that the same as "not
+    # stalled" rather than raising on missing data.
+    stall_verdict: Optional[dict] = None
 
 
 @dataclass
@@ -140,13 +146,21 @@ class IncidentDetector:
         vehicle_count: int,
         severity: str,
         timestamp: Optional[datetime] = None,
+        stall_verdict: Optional[dict] = None,
     ) -> list[Incident]:
         """
         Process one detection reading and return any newly raised incidents.
         Call this after every result is stored in ``latest_detections``.
+
+        ``stall_verdict`` is detection/stationary_tracker.py's
+        ``Verdict.to_dict()`` for this camera's current frame, when the
+        caller has one (the HLS pipeline does; the mock pipeline does not).
+        This is the one route a confirmed stall takes into the ``incidents``
+        table - see _check_stalled_vehicle.
         """
         ts      = timestamp or datetime.now(timezone.utc)
-        reading = _Reading(count=vehicle_count, severity=severity, timestamp=ts)
+        reading = _Reading(count=vehicle_count, severity=severity, timestamp=ts,
+                           stall_verdict=stall_verdict)
 
         if camera_id not in self._history:
             self._history[camera_id] = deque(maxlen=HISTORY_SIZE)
@@ -163,6 +177,7 @@ class IncidentDetector:
             self._check_road_blockage,
             self._check_rapid_buildup,
             self._check_night_low_visibility,
+            self._check_stalled_vehicle,
         ):
             inc = check(camera_id, reading, hist)
             if inc and inc.confidence >= MIN_CONFIDENCE:
@@ -422,6 +437,40 @@ class IncidentDetector:
             ),
         )
 
+    def _check_stalled_vehicle(
+        self,
+        camera_id: str,
+        r: _Reading,
+        hist: deque[_Reading],
+    ) -> Optional[Incident]:
+        """Raise when detection/stationary_tracker.py reports a confirmed stall.
+
+        The persistence requirement already lives in the tracker itself
+        (STALL_SECONDS_REQUIRED - real, unbroken per-vehicle tracking, not a
+        count pattern) - this only asks whether that already-confirmed
+        verdict should become a reported incident, through the same
+        CONFIRM_STREAK/MIN_CONFIDENCE gates every other check here uses, so
+        this camera's incident history lives in one place instead of two.
+        """
+        if "stalled_vehicle" in self._open.get(camera_id, {}):
+            return None
+        sv = r.stall_verdict
+        if not sv or not sv.get("is_incident"):
+            return None
+        return self._make(
+            camera_id     = camera_id,
+            itype         = "stalled_vehicle",
+            iseverity     = "severe",
+            confidence    = sv.get("confidence", 0.0),
+            vehicle_count = r.count,
+            description   = (
+                f"Stalled traffic at {_display(camera_id)}: "
+                f"{sv.get('stationary_count', 0)} of {sv.get('total_tracked', 0)} "
+                f"tracked vehicles have not moved for "
+                f"{sv.get('stalled_seconds', 0):.0f}s. Possible accident or breakdown."
+            ),
+        )
+
     # ── Auto-resolution ───────────────────────────────────────────────────────
 
     def _auto_resolve(
@@ -443,6 +492,8 @@ class IncidentDetector:
                 should = r.severity in ("free", "moderate")
             elif itype == "night_low_visibility":
                 should = r.count > 0
+            elif itype == "stalled_vehicle":
+                should = not (r.stall_verdict and r.stall_verdict.get("is_incident"))
             if should:
                 inc.resolved    = True
                 inc.resolved_at = now.isoformat()

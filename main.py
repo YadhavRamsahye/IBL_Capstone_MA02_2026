@@ -13,6 +13,7 @@ import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Optional
 
 from urllib.parse import quote_plus
 
@@ -46,7 +47,8 @@ from auth import (
 
 from detection.mock_pipeline import run_mock_pipeline
 from detection.pipeline import run_pipeline
-from detection.hls_pipeline import run_hls_pipeline, get_latest_frame
+from detection.hls_pipeline import run_hls_pipeline, get_latest_frame, FRAME_INTERVAL
+from detection.stationary_tracker import StationaryTracker
 from detection import camera_catalogue
 from detection.trafficwatch import discover_cameras
 from detection.claude_api import summary_service
@@ -323,6 +325,7 @@ async def _process_detection(camera_id: str, result: dict) -> None:
         camera_id     = camera_id,
         vehicle_count = result["vehicle_count"],
         severity      = result["severity"],
+        stall_verdict = result.get("incident_detail"),
     )
     if new_incidents:
         logger.info(
@@ -1165,6 +1168,51 @@ async def api_demo_escalate():
     return {"ok": True, "message": "Demo bottleneck triggered on caudan_north"}
 
 
+@app.post("/api/demo/stall", response_class=JSONResponse, dependencies=[Depends(require_admin)])
+async def api_demo_stall(camera_id: str = "caudan_north", frames: int = 80, vehicles: int = 4):
+    """Replay a synthetic held-still vehicle sequence through the real
+    StationaryTracker and the real incident pipeline (this process's live
+    ``incident_detector``, ``_save_incident``, the ``incidents`` table, and
+    /api/incidents/active) - proves the stalled-vehicle chain end-to-end
+    without waiting for a real stall. Diagnostic harness only; see
+    tools/incident_harness.py, which drives this endpoint.
+
+    The boxes are static and non-overlapping (150px apart) so IoU-based
+    frame-to-frame association is unambiguous - this is testing the incident
+    pipeline's wiring, not the tracker's association logic.
+    """
+    tracker = StationaryTracker(frame_interval=FRAME_INTERVAL)
+    boxes   = [[100.0 + i * 150, 300.0, 220.0 + i * 150, 420.0] for i in range(vehicles)]
+    classes = [2] * vehicles  # COCO class 2 = car
+
+    confirmed_at: Optional[int] = None
+    incident_ids: list[str] = []
+    verdict = None
+    for i in range(frames):
+        verdict = tracker.update(boxes, classes)
+        new = incident_detector.analyze(
+            camera_id     = camera_id,
+            vehicle_count = vehicles,
+            severity      = "moderate",
+            stall_verdict = verdict.to_dict(),
+        )
+        if new and confirmed_at is None:
+            confirmed_at = i + 1
+            incident_ids = [inc.incident_id for inc in new]
+            for inc in new:
+                await _save_incident(inc)   # awaited, not backgrounded: caller needs the DB row to exist on return
+
+    return {
+        "camera_id":          camera_id,
+        "frames_replayed":    frames,
+        "frame_interval_s":   tracker.frame_interval,
+        "frames_required":    tracker._frames_required,
+        "confirmed_at_frame": confirmed_at,
+        "incident_ids":       incident_ids,
+        "final_verdict":      verdict.to_dict() if verdict else None,
+    }
+
+
 @app.get("/api/analytics/hourly", response_class=JSONResponse,
          dependencies=[Depends(require_user)])
 async def api_analytics_hourly(hours: int = 24):
@@ -1202,7 +1250,8 @@ async def api_analytics_hourly(hours: int = 24):
                        AVG(vehicle_count)::float             AS avg_count,
                        AVG(saturation)::float                AS avg_saturation,
                        MAX(vehicle_count)                    AS peak_count,
-                       COUNT(*)                              AS samples
+                       COUNT(*)                              AS samples,
+                       COUNT(*) FILTER (WHERE is_incident)   AS stall_samples
                   FROM traffic_snapshots
                  WHERE snapshot_time >= NOW() - make_interval(hours => :h)
                  GROUP BY camera_id, hour
