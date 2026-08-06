@@ -42,9 +42,14 @@ from database import DB_AVAILABLE, AsyncSessionLocal as _AsyncSession
 
 logger = logging.getLogger(__name__)
 
-# Demo fallback is opt-out so an existing checkout keeps working, but it only
-# ever applies when there is no database to authenticate against.
-DEMO_LOGIN_ENABLED = os.getenv("ALLOW_DEMO_LOGIN", "true").lower() != "false"
+# Opt-in, not opt-out: DB_AVAILABLE is decided once at process startup (was
+# DB_PASSWORD set, was Postgres reachable via a TCP probe at that moment, did
+# the engine come up) and stays fixed for the process's whole life, so any
+# deployment that happens to boot with the database briefly unreachable - or
+# simply hasn't run Phase 7 setup yet - silently gained an admin account
+# using a well-known default password for as long as it kept running. Whoever
+# wants this fallback for a demo has to say so explicitly.
+DEMO_LOGIN_ENABLED = os.getenv("ALLOW_DEMO_LOGIN", "false").lower() == "true"
 _DEMO_USER = "admin"
 _DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "admin123")
 
