@@ -18,7 +18,7 @@ from urllib.parse import quote_plus
 
 from fastapi import FastAPI, HTTPException, Request, Form, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -33,7 +33,10 @@ load_dotenv()
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from database import DB_AVAILABLE, AsyncSessionLocal as _AsyncSession
+from database import (
+    DB_AVAILABLE, AsyncSessionLocal as _AsyncSession,
+    HOST as _DB_HOST, PORT as _DB_PORT, DB_NAME as _DB_NAME,
+)
 from detection import direction
 from detection.severity import capacity_for
 from auth import (
@@ -43,7 +46,7 @@ from auth import (
 
 from detection.mock_pipeline import run_mock_pipeline
 from detection.pipeline import run_pipeline
-from detection.hls_pipeline import run_hls_pipeline
+from detection.hls_pipeline import run_hls_pipeline, get_latest_frame
 from detection import camera_catalogue
 from detection.trafficwatch import discover_cameras
 from detection.claude_api import summary_service
@@ -159,25 +162,40 @@ def _safe_next(gen):
         return _GEN_DONE
 
 
+async def _upsert_camera(db, camera_id: str) -> None:
+    """Idempotent upsert of a camera's row in ``cameras``.
+
+    traffic_snapshots, bottleneck_events and incidents all carry a foreign
+    key on cameras(id), and _save_snapshot / _save_bottleneck_event /
+    _save_incident are fired as independent, unordered asyncio tasks - none
+    of them can assume another has already created the row. Calling this
+    first in each makes every insert self-sufficient instead of depending on
+    _save_snapshot happening to run first, which is what let a camera's very
+    first bottleneck reading lose its write to a foreign-key violation
+    (observed on casernes - see audit section 8).
+    """
+    cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
+    await db.execute(text("""
+        INSERT INTO cameras (id, name, latitude, longitude, capacity_pcu)
+        VALUES (:id, :name, :lat, :lng, :capacity)
+        ON CONFLICT (id) DO UPDATE
+            SET last_seen = NOW(), capacity_pcu = EXCLUDED.capacity_pcu
+    """), {
+        "id":       camera_id,
+        "name":     cam.get("name", camera_id),
+        "lat":      cam.get("lat"),
+        "lng":      cam.get("lng"),
+        "capacity": capacity_for(camera_id),
+    })
+
+
 async def _save_snapshot(camera_id: str, result: dict) -> None:
     """Persist a detection result to traffic_snapshots (best-effort, non-blocking)."""
     if not DB_AVAILABLE or _AsyncSession is None:
         return
     try:
-        cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
         async with _AsyncSession() as db:
-            await db.execute(text("""
-                INSERT INTO cameras (id, name, latitude, longitude, capacity_pcu)
-                VALUES (:id, :name, :lat, :lng, :capacity)
-                ON CONFLICT (id) DO UPDATE
-                    SET last_seen = NOW(), capacity_pcu = EXCLUDED.capacity_pcu
-            """), {
-                "id":       camera_id,
-                "name":     cam.get("name", camera_id),
-                "lat":      cam.get("lat"),
-                "lng":      cam.get("lng"),
-                "capacity": capacity_for(camera_id),
-            })
+            await _upsert_camera(db, camera_id)
             await db.execute(text("""
                 INSERT INTO traffic_snapshots
                     (id, camera_id, snapshot_time, vehicle_count, pcu, saturation,
@@ -211,6 +229,7 @@ async def _save_bottleneck_event(camera_id: str, result: dict) -> None:
     try:
         cam = next((c for c in _active_cameras if c["camera_id"] == camera_id), {})
         async with _AsyncSession() as db:
+            await _upsert_camera(db, camera_id)
             await db.execute(text("""
                 INSERT INTO bottleneck_events
                     (id, camera_id, detected_at, severity, vehicle_count,
@@ -241,6 +260,7 @@ async def _save_incident(inc) -> None:
         return
     try:
         async with _AsyncSession() as db:
+            await _upsert_camera(db, inc.camera_id)
             await db.execute(text("""
                 INSERT INTO incidents
                     (id, camera_id, type, severity, confidence, vehicle_count,
@@ -566,6 +586,19 @@ async def _real_camera_loop(camera_id: str, source: str) -> None:
 async def lifespan(app: FastAPI):
 
     global _active_cameras
+
+    # database.py's own "[db] Engine ready" log fires at import time, before
+    # main.py's logging is configured — with no handler attached yet, Python's
+    # last-resort handler (WARNING+ only) drops that INFO-level line silently.
+    # Re-state the outcome here, now that logging is live, loud on both paths.
+    if DB_AVAILABLE:
+        logger.info("[db] Engine ready → %s:%d/%s", _DB_HOST, _DB_PORT, _DB_NAME)
+    else:
+        logger.warning(
+            "[db] Not connected — starting without persistence "
+            "(see the [db] warning above for why; check DB_HOST/DB_PORT/DB_USER/"
+            "DB_PASSWORD/DB_NAME in .env)."
+        )
 
     # Discovery runs in a thread — it is synchronous / blocking
     logger.info("Running Traffic Watch camera discovery …")
@@ -972,6 +1005,35 @@ async def api_cameras(include_catalogue: bool = True):
                 "coords_precision": cam["coords_precision"],
             })
     return result
+
+
+@app.get("/api/cameras/{camera_id}/frame.jpg", dependencies=[Depends(require_user)])
+async def api_camera_frame(camera_id: str):
+    """Latest annotated JPEG frame for a live camera, boxes already drawn.
+
+    Behind the same auth as every other /api/* route — the original audit's
+    headline finding was unauthenticated API routes, and camera footage is
+    exactly the kind of thing that should not be reintroduced as one.
+
+    Mock cameras and anything not running the HLS pipeline never have a
+    stored frame, so this 404s for them rather than serving nothing useful.
+    """
+    stored = get_latest_frame(camera_id)
+    if stored is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No frame captured yet for camera '{camera_id}'.",
+        )
+    jpeg_bytes, captured_at = stored
+    age_seconds = (datetime.now(timezone.utc) - captured_at).total_seconds()
+    return Response(
+        content=jpeg_bytes,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Frame-Age-Seconds": f"{age_seconds:.1f}",
+        },
+    )
 
 
 @app.get("/api/incidents", response_class=JSONResponse, dependencies=[Depends(require_user)])
