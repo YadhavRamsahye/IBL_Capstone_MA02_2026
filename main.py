@@ -1250,7 +1250,8 @@ async def api_analytics_hourly(hours: int = 24):
                        AVG(vehicle_count)::float             AS avg_count,
                        AVG(saturation)::float                AS avg_saturation,
                        MAX(vehicle_count)                    AS peak_count,
-                       COUNT(*)                              AS samples
+                       COUNT(*)                              AS samples,
+                       COUNT(*) FILTER (WHERE is_incident)   AS stall_samples
                   FROM traffic_snapshots
                  WHERE snapshot_time >= NOW() - make_interval(hours => :h)
                  GROUP BY camera_id, hour
