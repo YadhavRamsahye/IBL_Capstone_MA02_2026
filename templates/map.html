@@ -258,6 +258,42 @@ Module   : Dashboard UI / Templates
         .map-info-bar strong { color: #58a6ff; }
         .map-info-bar .live  { color: #23c55e; }
 
+        /* ── Camera overview strip ── */
+        .camera-strip {
+            position: absolute; left: 12px; right: 12px; bottom: 12px;
+            display: flex; gap: 8px; overflow-x: auto; z-index: 500;
+            padding-bottom: 2px;
+        }
+        .camera-strip::-webkit-scrollbar { height: 4px; }
+        .camera-strip::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+        .strip-item {
+            flex-shrink: 0; width: 120px; cursor: pointer;
+            background: rgba(22,27,34,.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            border: 1px solid #30363d; border-radius: 8px; overflow: hidden;
+            transition: border-color .15s;
+        }
+        .strip-item:hover { border-color: #58a6ff; }
+        .strip-thumb-wrap { width: 100%; aspect-ratio: 16/9; background: #1c2128; position: relative; }
+        .strip-thumb-wrap img {
+            width: 100%; height: 100%; object-fit: cover; display: block;
+        }
+        .strip-thumb-ph {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: #5a6675; font-size: 9px; text-align: center; padding: 4px;
+        }
+        .strip-sev-dot {
+            position: absolute; top: 4px; right: 4px; width: 8px; height: 8px;
+            border-radius: 50%; border: 1.5px solid rgba(0,0,0,.5);
+        }
+        .strip-label { padding: 5px 7px; }
+        .strip-name  { font-size: 10px; font-weight: 600; color: #c8d8e8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .strip-count { font-size: 9px; color: rgba(230,237,243,.5); margin-top: 1px; }
+
+        @media (max-width: 639px) {
+            .camera-strip { bottom: calc(62px + env(safe-area-inset-bottom, 0px) + 8px); }
+            .strip-item { width: 96px; }
+        }
+
         @keyframes incidentPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
         @keyframes incidentRingPulse {
             0%   { transform: translate(-50%,-50%) scale(1);   opacity: 0.9; }
@@ -501,6 +537,7 @@ Module   : Dashboard UI / Templates
             Vehicles: <strong id="infoVehicles">—</strong>
         </div>
         <div id="map"></div>
+        <div class="camera-strip" id="cameraStrip"></div>
     </div>
 
 </div>
@@ -651,6 +688,9 @@ async function fetchCameras() {
             cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
                 .addTo(map)
                 .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
+            // Thumbnail only polls while this camera's popup is actually open.
+            cameraMarkers[id].on('popupopen',  () => startFramePolling(id));
+            cameraMarkers[id].on('popupclose', () => stopFramePolling(id));
         }
     }
     const note = document.getElementById('cameraCoverage');
@@ -719,11 +759,136 @@ function incidentBadgeHtml(det) {
     return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
 }
 
+// ── Live camera streaming (MJPEG) ─────────────────────────────────────────────
+// GET /api/cameras/{id}/stream.mjpg is a standard multipart/x-mixed-replace
+// stream - a plain <img src="…"> renders it continuously with zero JS polling
+// loop. This replaced an earlier version that fetched frame.jpg on a client
+// timer: same underlying data (a new annotated frame exists once per
+// detection cycle, ~2s, either way - this doesn't create frames faster than
+// that), but polling meant every frame paid a full request/blob/swap round
+// trip and flashed back to the placeholder in between, which is what made it
+// look like a slow slideshow rather than a feed. The native multipart stream
+// removes all of that: each new frame lands the instant it's ready.
+const activeStreams = {};   // img element id -> { camId, phId, liveId }, for visibilitychange
+
+function _streamUrl(camId) {
+    return `${API_BASE}/api/cameras/${camId}/stream.mjpg?t=${Date.now()}`;
+}
+
+function connectStream(imgId, phId, liveId, camId) {
+    const img = document.getElementById(imgId);
+    if (!img) return;
+    const ph   = phId   ? document.getElementById(phId)   : null;
+    const live = liveId ? document.getElementById(liveId) : null;
+
+    img.onload = () => {
+        img.style.display = 'block';
+        if (ph)   ph.style.display = 'none';
+        if (live) live.style.display = 'inline-block';
+    };
+    img.onerror = () => {
+        img.style.display = 'none';
+        if (live) live.style.display = 'none';
+        if (ph) { ph.style.display = 'flex'; ph.textContent = 'No footage yet'; }
+    };
+    img.src = _streamUrl(camId);
+    activeStreams[imgId] = { camId, phId, liveId };
+}
+
+function disconnectStream(imgId) {
+    const img = document.getElementById(imgId);
+    if (img) { img.onload = null; img.onerror = null; img.src = ''; }
+    delete activeStreams[imgId];
+}
+
+// Tab hidden: drop every open stream connection (no point holding it open
+// server-side for a tab nobody's looking at). Tab visible again: reconnect
+// everything that was active, fresh - a stale multipart connection doesn't
+// reliably resume on its own.
+document.addEventListener('visibilitychange', () => {
+    for (const [imgId, meta] of Object.entries(activeStreams)) {
+        const img = document.getElementById(imgId);
+        if (!img) continue;
+        img.src = document.hidden ? '' : _streamUrl(meta.camId);
+    }
+});
+
+function cameraFrameHtml(id) {
+    return `
+        <div style="margin-bottom:8px;">
+            <div style="position:relative;width:100%;aspect-ratio:16/9;background:#1c2128;
+                border:1px solid #30363d;border-radius:6px;overflow:hidden;">
+                <img id="popFrame_${id}" style="width:100%;height:100%;object-fit:cover;display:none;" />
+                <div id="popFramePh_${id}" style="position:absolute;inset:0;display:flex;
+                    align-items:center;justify-content:center;color:#5a6675;font-size:11px;
+                    text-align:center;padding:8px;">
+                    Loading feed…
+                </div>
+                <div id="popFrameLive_${id}" style="display:none;position:absolute;top:5px;right:5px;
+                    background:rgba(0,0,0,.6);color:#e94560;font-size:9px;font-weight:700;
+                    padding:2px 7px;border-radius:10px;letter-spacing:.3px;">
+                    ● LIVE
+                </div>
+            </div>
+        </div>`;
+}
+
+function startFramePolling(id) {   // name kept - called from popupopen/popupclose below
+    connectStream(`popFrame_${id}`, `popFramePh_${id}`, `popFrameLive_${id}`, id);
+}
+
+function stopFramePolling(id) {
+    disconnectStream(`popFrame_${id}`);
+}
+
+// ── Camera overview strip ─────────────────────────────────────────────────────
+// Always-visible filmstrip, independent of any popup being open. Costs
+// nothing extra server-side: the annotated frame is encoded once per
+// detection cycle regardless of who's watching (measured at ~4ms, ~0.4% of
+// YOLOv8m's own inference time), and every stream - popup or strip - reads
+// the same cached bytes.
+function buildCameraStrip() {
+    const strip = document.getElementById('cameraStrip');
+    if (!strip || strip.dataset.built) return;
+
+    let html = '';
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (loc.monitored === false) continue;   // catalogued only - never has a frame
+        html += `
+            <div class="strip-item" onclick="focusCamera('${id}')">
+                <div class="strip-thumb-wrap">
+                    <img id="stripImg_${id}" style="display:none;" />
+                    <div id="stripPh_${id}" class="strip-thumb-ph">Loading…</div>
+                    <div id="stripDot_${id}" class="strip-sev-dot" style="background:${SEV_COLOR.unknown};"></div>
+                </div>
+                <div class="strip-label">
+                    <div class="strip-name">${loc.name}</div>
+                    <div class="strip-count" id="stripCount_${id}">—</div>
+                </div>
+            </div>`;
+    }
+    strip.innerHTML = html;
+    strip.dataset.built = '1';
+
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (loc.monitored === false) continue;
+        connectStream(`stripImg_${id}`, `stripPh_${id}`, null, id);
+    }
+}
+
+function focusCamera(id) {
+    const loc = CAMERA_LOCS[id];
+    if (!loc) return;
+    flyTo(loc.coords[0], loc.coords[1], 16);
+    cameraMarkers[id]?.openPopup();
+}
+
 function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
     const incidentBadge = incidentBadgeHtml(det);
     return `
         <div style="min-width:200px;font-family:Segoe UI,sans-serif;">
             <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
+            ${cameraFrameHtml(id)}
             <div id="popSev_${id}" style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
             <div id="popBadge_${id}">${incidentBadge}</div>
             <table style="font-size:12px;color:#555;width:100%;">
@@ -843,6 +1008,11 @@ function applyTrafficData(data) {
 
         if (loc) heatPoints.push([loc.coords[0], loc.coords[1], Math.min(det.vehicle_count / 35, 1.0)]);
         totalVehicles += det.vehicle_count ?? 0;
+
+        const stripDot = document.getElementById(`stripDot_${id}`);
+        if (stripDot) stripDot.style.background = color;
+        const stripCount = document.getElementById(`stripCount_${id}`);
+        if (stripCount) stripCount.textContent = `${det.vehicle_count} · ${(det.severity ?? '').toUpperCase()}`;
 
         const li = document.createElement('li');
         li.onclick = () => loc && flyTo(loc.coords[0], loc.coords[1], 16);
@@ -1052,6 +1222,7 @@ async function poll() {
 
 async function init() {
     await fetchCameras();
+    buildCameraStrip();
     fetchTraffic();     // initial HTTP fetch while WS handshakes
     connectWS();        // live updates via WebSocket
     poll();
