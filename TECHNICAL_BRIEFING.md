@@ -1101,10 +1101,10 @@ These are displayed on the login page itself in a "Demo Credentials" box. Both c
 | `DB_HOST` | `localhost` | PostgreSQL server hostname (default: localhost) |
 | `DB_PORT` | `5432` | PostgreSQL port (default: 5432) |
 | `DB_USER` | `postgres` | PostgreSQL username |
-| `DB_PASSWORD` | `tqu9vfds` | PostgreSQL password |
-| `DB_NAME` | `TrafficSystem` | Database name |
+| `DB_PASSWORD` | `your-postgres-password` | PostgreSQL password. No default — the value used to be a literal committed to source; it now must be set in `.env` or persistence stays off. |
+| `DB_NAME` | `trafficsystem` | Database name |
 
-All database variables have defaults in `database.py`, so only `ANTHROPIC_API_KEY` is strictly required for the application to run with Claude summaries.
+`DB_HOST`, `DB_PORT` and `DB_USER` have sane defaults in `database.py`. `DB_PASSWORD` does not — leaving it unset is a supported "no persistence" mode, not a misconfiguration. `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY`, depending on `SUMMARY_PROVIDER`) is the only variable strictly required for AI-generated (non-template) summaries.
 
 ### What `requirements.txt` Contains and Why Each Package Is Needed
 
