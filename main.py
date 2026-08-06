@@ -323,6 +323,7 @@ async def _process_detection(camera_id: str, result: dict) -> None:
         camera_id     = camera_id,
         vehicle_count = result["vehicle_count"],
         severity      = result["severity"],
+        stall_verdict = result.get("incident_detail"),
     )
     if new_incidents:
         logger.info(
