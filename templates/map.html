@@ -258,6 +258,42 @@ Module   : Dashboard UI / Templates
         .map-info-bar strong { color: #58a6ff; }
         .map-info-bar .live  { color: #23c55e; }
 
+        /* ── Camera overview strip ── */
+        .camera-strip {
+            position: absolute; left: 12px; right: 12px; bottom: 12px;
+            display: flex; gap: 8px; overflow-x: auto; z-index: 500;
+            padding-bottom: 2px;
+        }
+        .camera-strip::-webkit-scrollbar { height: 4px; }
+        .camera-strip::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+        .strip-item {
+            flex-shrink: 0; width: 120px; cursor: pointer;
+            background: rgba(22,27,34,.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            border: 1px solid #30363d; border-radius: 8px; overflow: hidden;
+            transition: border-color .15s;
+        }
+        .strip-item:hover { border-color: #58a6ff; }
+        .strip-thumb-wrap { width: 100%; aspect-ratio: 16/9; background: #1c2128; position: relative; }
+        .strip-thumb-wrap img {
+            width: 100%; height: 100%; object-fit: cover; display: block;
+        }
+        .strip-thumb-ph {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: #5a6675; font-size: 9px; text-align: center; padding: 4px;
+        }
+        .strip-sev-dot {
+            position: absolute; top: 4px; right: 4px; width: 8px; height: 8px;
+            border-radius: 50%; border: 1.5px solid rgba(0,0,0,.5);
+        }
+        .strip-label { padding: 5px 7px; }
+        .strip-name  { font-size: 10px; font-weight: 600; color: #c8d8e8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .strip-count { font-size: 9px; color: rgba(230,237,243,.5); margin-top: 1px; }
+
+        @media (max-width: 639px) {
+            .camera-strip { bottom: calc(62px + env(safe-area-inset-bottom, 0px) + 8px); }
+            .strip-item { width: 96px; }
+        }
+
         @keyframes incidentPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
         @keyframes incidentRingPulse {
             0%   { transform: translate(-50%,-50%) scale(1);   opacity: 0.9; }
@@ -501,6 +537,7 @@ Module   : Dashboard UI / Templates
             Vehicles: <strong id="infoVehicles">—</strong>
         </div>
         <div id="map"></div>
+        <div class="camera-strip" id="cameraStrip"></div>
     </div>
 
 </div>
@@ -803,6 +840,82 @@ document.addEventListener('visibilitychange', () => {
     if (!document.hidden) Object.keys(framePollers).forEach(refreshFrame);
 });
 
+// ── Camera overview strip ─────────────────────────────────────────────────────
+// Always-visible filmstrip, independent of any popup being open. This costs
+// nothing extra server-side: the annotated frame is encoded once per
+// detection cycle regardless of who is watching (measured at ~4ms, ~0.4% of
+// YOLOv8m's own inference time), and every poller - popup or strip - just
+// reads the same cached bytes.
+const STRIP_POLL_MS = 3000;
+let stripPoller = null;
+
+function buildCameraStrip() {
+    const strip = document.getElementById('cameraStrip');
+    if (!strip || strip.dataset.built) return;
+
+    let html = '';
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (loc.monitored === false) continue;   // catalogued only - never has a frame
+        html += `
+            <div class="strip-item" onclick="focusCamera('${id}')">
+                <div class="strip-thumb-wrap">
+                    <img id="stripImg_${id}" style="display:none;" />
+                    <div id="stripPh_${id}" class="strip-thumb-ph">Loading…</div>
+                    <div id="stripDot_${id}" class="strip-sev-dot" style="background:${SEV_COLOR.unknown};"></div>
+                </div>
+                <div class="strip-label">
+                    <div class="strip-name">${loc.name}</div>
+                    <div class="strip-count" id="stripCount_${id}">—</div>
+                </div>
+            </div>`;
+    }
+    strip.innerHTML = html;
+    strip.dataset.built = '1';
+
+    refreshStrip();
+    if (!stripPoller) {
+        stripPoller = setInterval(() => { if (!document.hidden) refreshStrip(); }, STRIP_POLL_MS);
+    }
+}
+
+function focusCamera(id) {
+    const loc = CAMERA_LOCS[id];
+    if (!loc) return;
+    flyTo(loc.coords[0], loc.coords[1], 16);
+    cameraMarkers[id]?.openPopup();
+}
+
+async function refreshStripFrame(id) {
+    const img = document.getElementById(`stripImg_${id}`);
+    const ph  = document.getElementById(`stripPh_${id}`);
+    if (!img) return;   // strip not built yet, or camera dropped
+    try {
+        const res = await fetch(`${API_BASE}/api/cameras/${id}/frame.jpg?t=${Date.now()}`);
+        if (res.status === 404) {
+            img.style.display = 'none';
+            if (ph) { ph.style.display = 'flex'; ph.textContent = 'No footage yet'; }
+            return;
+        }
+        if (!res.ok) return;
+
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const prev = img.dataset.blobUrl;
+        img.src = url;
+        img.dataset.blobUrl = url;
+        img.style.display = 'block';
+        if (ph) ph.style.display = 'none';
+        if (prev) URL.revokeObjectURL(prev);
+    } catch (_) {}
+}
+
+function refreshStrip() {
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (loc.monitored === false) continue;
+        refreshStripFrame(id);
+    }
+}
+
 function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
     const incidentBadge = incidentBadgeHtml(det);
     return `
@@ -928,6 +1041,11 @@ function applyTrafficData(data) {
 
         if (loc) heatPoints.push([loc.coords[0], loc.coords[1], Math.min(det.vehicle_count / 35, 1.0)]);
         totalVehicles += det.vehicle_count ?? 0;
+
+        const stripDot = document.getElementById(`stripDot_${id}`);
+        if (stripDot) stripDot.style.background = color;
+        const stripCount = document.getElementById(`stripCount_${id}`);
+        if (stripCount) stripCount.textContent = `${det.vehicle_count} · ${(det.severity ?? '').toUpperCase()}`;
 
         const li = document.createElement('li');
         li.onclick = () => loc && flyTo(loc.coords[0], loc.coords[1], 16);
@@ -1137,6 +1255,7 @@ async function poll() {
 
 async function init() {
     await fetchCameras();
+    buildCameraStrip();
     fetchTraffic();     // initial HTTP fetch while WS handshakes
     connectWS();        // live updates via WebSocket
     poll();
