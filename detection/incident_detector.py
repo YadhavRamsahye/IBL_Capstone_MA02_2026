@@ -1,7 +1,7 @@
 """
-Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Author : Sahil Singh Rughoo (22414560) - Tech Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ FREEZE_TIMEOUT_SECS = 90   # seconds without data → camera_freeze
 NIGHT_ZERO_STREAK   = 5    # consecutive zero readings at night → night_low_visibility
 
 # Mauritius is UTC+4. The previous 18→06 UTC window meant 22:00→10:00 local,
-# which swallowed the entire morning rush — a busy 08:00 road with a briefly
+# which swallowed the entire morning rush - a busy 08:00 road with a briefly
 # empty frame was being reported as night-time low visibility.
-NIGHT_START_HOUR    = 17   # UTC — 21:00 Port Louis
-NIGHT_END_HOUR      = 1    # UTC — 05:00 Port Louis
+NIGHT_START_HOUR    = 17   # UTC - 21:00 Port Louis
+NIGHT_END_HOUR      = 1    # UTC - 05:00 Port Louis
 
 # A candidate must repeat on this many consecutive readings before it becomes
 # a reported incident. Single-reading detections are what produced the
@@ -57,10 +57,10 @@ _TYPE_META: dict[str, dict] = {
 }
 
 _CAMERA_DISPLAY: dict[str, str] = {
-    "caudan_north": "Caudan North — Port Louis",
-    "caudan_south": "Caudan South — Port Louis",
-    "la_chaussee":  "La Chaussee Street — Port Louis",
-    "casernes":     "Casernes / Brabant Street — Port Louis",
+    "caudan_north": "Caudan North - Port Louis",
+    "caudan_south": "Caudan South - Port Louis",
+    "la_chaussee":  "La Chaussee Street - Port Louis",
+    "casernes":     "Casernes / Brabant Street - Port Louis",
 }
 
 
@@ -120,7 +120,7 @@ class IncidentDetector:
     """
     Stateful, per-camera rolling-window incident detector.
 
-    Not thread-safe — designed for a single asyncio event loop where
+    Not thread-safe - designed for a single asyncio event loop where
     all calls arrive sequentially from background camera tasks.
     """
 
@@ -184,7 +184,7 @@ class IncidentDetector:
                 candidates[inc.type] = inc
 
         pending = self._pending.setdefault(camera_id, {})
-        # A candidate that stops recurring is noise — drop its streak entirely
+        # A candidate that stops recurring is noise - drop its streak entirely
         # rather than letting it accumulate across unrelated episodes.
         for itype in list(pending):
             if itype not in candidates:
@@ -230,7 +230,7 @@ class IncidentDetector:
 
     def get_all_incidents(self, limit: int = 100) -> list[dict]:
         """All incidents (resolved + active), newest first, up to *limit*."""
-        # deque does not support slicing — materialise first.
+        # deque does not support slicing - materialise first.
         return [i.to_dict() for i in reversed(list(self._log)[-limit:])]
 
     def get_incidents_by_camera(self, camera_id: str) -> list[dict]:
@@ -301,7 +301,7 @@ class IncidentDetector:
                 # Reports the rolling-median baseline, not hist[-1]. The check
                 # was changed to measure against the median (so it survives
                 # confirmation across readings), but this text still quoted the
-                # previous reading — which by then equals the current one, so
+                # previous reading - which by then equals the current one, so
                 # it read "jumped from 26 to 26 (+8)".
                 f"Sudden congestion at {_display(camera_id)}: vehicle count rose "
                 f"to {r.count}, {spike:.0f} above the recent average of "

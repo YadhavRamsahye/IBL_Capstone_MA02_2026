@@ -4,8 +4,8 @@ Learn where a camera's two directions of travel separate.
 
 Why this is needed
 ------------------
-detection/direction.py classifies vehicles by *position* — which side of a
-dividing line they sit on — because position works when traffic is stopped and
+detection/direction.py classifies vehicles by *position* - which side of a
+dividing line they sit on - because position works when traffic is stopped and
 motion does not. But the line itself has to come from somewhere, and it depends
 on how each camera is mounted and which way it points.
 
@@ -18,8 +18,8 @@ Method
 1. Grab frames and track vehicles (reusing the pipeline's IoU tracker).
 2. Keep every track that moved far enough to have a real direction, recording
    its start position and displacement.
-3. Find the dominant axis of travel — the direction along which movement varies
-   most — via the principal eigenvector of the displacement covariance.
+3. Find the dominant axis of travel - the direction along which movement varies
+   most - via the principal eigenvector of the displacement covariance.
 4. Split tracks by the sign of their movement along that axis.
 5. The dividing line sits midway between the two groups' centroids, with its
    normal pointing from the negative group toward the positive one.
@@ -31,7 +31,7 @@ Usage
 -----
     python tools/calibrate_direction.py --camera caudan_south --minutes 10
 
-Run it while traffic is *flowing* — during a jam there is no motion to learn
+Run it while traffic is *flowing* - during a jam there is no motion to learn
 from. Longer samples give a better line; ten minutes across a busy period is a
 reasonable start. Paste the printed block into CAMERA_DIRECTIONS.
 
@@ -39,7 +39,7 @@ Reading the output
 ------------------
 `separation` is how cleanly the two groups divide, as the ratio of the gap
 between centroids to their combined spread. Above ~1.5 the streams are clearly
-apart and the line is trustworthy. Below ~0.8 they overlap heavily — usually a
+apart and the line is trustworthy. Below ~0.8 they overlap heavily - usually a
 camera pointing along the road rather than across it, where the two directions
 genuinely occupy the same pixels and no line can separate them. The tool says so
 rather than emitting a config that would misclassify half the traffic.
@@ -118,7 +118,7 @@ def collect(camera_id: str, minutes: float) -> list[dict]:
     deadline = time.time() + minutes * 60
     frames = 0
 
-    print(f"Sampling {camera_id} for {minutes:g} minutes — traffic must be moving.\n")
+    print(f"Sampling {camera_id} for {minutes:g} minutes - traffic must be moving.\n")
     while time.time() < deadline:
         frame = _grab_single_frame([url], DEFAULT_WIDTH, DEFAULT_HEIGHT)
         if frame is None:
@@ -175,7 +175,7 @@ def fit(camera_id: str, samples: list[dict]) -> None:
     print(f"Tracks against axis     : {len(neg)}")
 
     if not pos or not neg:
-        sys.exit("\nAll traffic moved the same way — this looks like a one-way "
+        sys.exit("\nAll traffic moved the same way - this looks like a one-way "
                  "road, or the sample only caught one phase. No split needed.")
 
     c_pos = _centroid([s["centre"] for s in pos])
@@ -186,7 +186,7 @@ def fit(camera_id: str, samples: list[dict]) -> None:
     nx, ny = c_pos[0] - c_neg[0], c_pos[1] - c_neg[1]
     gap = math.hypot(nx, ny)
     if gap < 1e-6:
-        sys.exit("\nBoth directions share the same centroid — the camera looks "
+        sys.exit("\nBoth directions share the same centroid - the camera looks "
                  "along the road rather than across it, so no line can "
                  "separate them. Direction cannot be derived for this camera.")
     normal = (nx / gap, ny / gap)
@@ -199,11 +199,11 @@ def fit(camera_id: str, samples: list[dict]) -> None:
     print(f"Centroid gap            : {gap:.1f}px")
     print(f"Separation quality      : {separation:.2f}", end="  ")
     if separation >= GOOD_SEPARATION:
-        print("(clean split — trustworthy)")
+        print("(clean split - trustworthy)")
     elif separation >= POOR_SEPARATION:
-        print("(marginal — verify against footage before relying on it)")
+        print("(marginal - verify against footage before relying on it)")
     else:
-        print("(POOR — the two directions overlap)")
+        print("(POOR - the two directions overlap)")
         print("\nThe streams are not separable by position on this camera. "
               "Leave it uncalibrated: a single combined figure is honest, "
               "whereas this line would misclassify a large share of vehicles.")
@@ -227,7 +227,7 @@ def fit(camera_id: str, samples: list[dict]) -> None:
     print("=" * 68)
     print("\nLabels are inferred from image axes and assume the camera is "
           "roughly north-up. Check them against the real road before "
-          "committing — a mislabelled direction is worse than none.")
+          "committing - a mislabelled direction is worse than none.")
 
 
 def main() -> None:

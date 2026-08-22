@@ -1,7 +1,7 @@
 """
-Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Author : Sahil Singh Rughoo (22414560) - Tech Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ MAX_CONCURRENT_INFERENCE = int(
 _inference_slots = threading.Semaphore(MAX_CONCURRENT_INFERENCE)
 
 # One model instance shared by every camera. This used to be constructed inside
-# run_hls_pipeline, so each camera held its own copy — 38 cameras meant 38 model
+# run_hls_pipeline, so each camera held its own copy - 38 cameras meant 38 model
 # loads and 38x the memory for identical weights.
 _model_cache: dict[str, YOLO] = {}
 _model_lock = threading.Lock()
@@ -112,7 +112,7 @@ def _store_annotated_frame(
         ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, _FRAME_JPEG_QUALITY]
     )
     if not ok:
-        logger.warning("[%s] JPEG encode failed — skipping frame cache update.", camera_id)
+        logger.warning("[%s] JPEG encode failed - skipping frame cache update.", camera_id)
         return
 
     with _frames_lock:
@@ -262,7 +262,7 @@ def _detect_loop(
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 raise RuntimeError(
                     f"[{camera_id}] {MAX_CONSECUTIVE_FAILURES} consecutive frame grabs "
-                    "failed — stream appears unavailable."
+                    "failed - stream appears unavailable."
                 )
             # A missed grab gets the same per-track grace period as a frame
             # that was grabbed but produced no matching detection, rather than
@@ -329,7 +329,7 @@ def _detect_loop(
         # ── Incident signal ───────────────────────────────────────────────────
         # Tracked and time-persistent: a vehicle must be held stationary across
         # many frames before this reports anything. The previous per-frame
-        # heuristics (large box / nearest-any-centre) are gone — see the module
+        # heuristics (large box / nearest-any-centre) are gone - see the module
         # docstring in detection/stationary_tracker.py for why they fired on
         # ordinary traffic.
         verdict = tracker.update(vehicle_boxes, vehicle_classes)
@@ -383,7 +383,7 @@ def run_hls_pipeline(
 
     if not _ffmpeg_available():
         logger.error(
-            "[%s] ffmpeg not found on PATH — cannot run HLS pipeline.\n"
+            "[%s] ffmpeg not found on PATH - cannot run HLS pipeline.\n"
             "  Install: https://www.gyan.dev/ffmpeg/builds/\n"
             "  Verify:  ffmpeg -version",
             camera_id,
@@ -391,7 +391,7 @@ def run_hls_pipeline(
         return   # caller handles fallback
 
     logger.info("[%s] Loading YOLOv8 model %r …", camera_id, MODEL_PATH)
-    # Shared instance — see get_model(). Loading per camera meant 38 copies.
+    # Shared instance - see get_model(). Loading per camera meant 38 copies.
     model = get_model()
     try:
         import torch
@@ -411,7 +411,7 @@ def run_hls_pipeline(
             )
             yield from _detect_loop(model, hls_urls, camera_id, width, height, device=_device)
             logger.info("[%s] Detection loop ended cleanly.", camera_id)
-            break   # clean exit — don't retry
+            break   # clean exit - don't retry
 
         except Exception as exc:
             logger.error("[%s] Detection loop error: %s", camera_id, exc)

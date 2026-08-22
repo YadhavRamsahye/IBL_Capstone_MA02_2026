@@ -1,7 +1,7 @@
 """
-Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Author : Sahil Singh Rughoo (22414560) - Tech Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def _active_camera_ids() -> set[str] | None:
     MYT publishes 38 cameras but each one costs an ffmpeg subprocess plus a
     YOLOv8m inference every FRAME_INTERVAL seconds. On CPU-only inference,
     running all of them saturates the machine and produces *worse* data than a
-    handful — frame grabs start timing out. So the catalogue is complete while
+    handful - frame grabs start timing out. So the catalogue is complete while
     what gets processed is capped, and the cap is configuration rather than a
     code edit:
 
@@ -42,7 +42,7 @@ def _active_camera_ids() -> set[str] | None:
 
 
 # Detection defaults to the four cameras with hand-verified coordinates and
-# calibrated capacities — the set this project has actually been validated on.
+# calibrated capacities - the set this project has actually been validated on.
 DEFAULT_ACTIVE: tuple[str, ...] = (
     "caudan_north", "caudan_south", "la_chaussee", "casernes",
 )
@@ -52,7 +52,7 @@ DEFAULT_ACTIVE: tuple[str, ...] = (
 # from MYT's page by tools/fetch_cameras.py. This module previously carried four
 # hand-written entries covering only central Port Louis.
 #
-# MYT_CAMERAS is the subset detection actually runs on — see _active_camera_ids.
+# MYT_CAMERAS is the subset detection actually runs on - see _active_camera_ids.
 # CAUDAN_NORTH is served from /rh/prod rather than /prod; the catalogue records
 # each camera's real sourceURL so that stays correct without a special case here.
 
@@ -80,7 +80,7 @@ MYT_CAMERAS: list[dict] = _build_active()
 FALLBACK_CAMERAS: list[dict] = [
     {
         "camera_id":   "tw_fallback_1",
-        "name":        "Fallback — check myt.mu/trafficwatch manually",
+        "name":        "Fallback - check myt.mu/trafficwatch manually",
         "source":      "mock",
         "stream_base": "",
         "origin":      "fallback",
@@ -88,7 +88,7 @@ FALLBACK_CAMERAS: list[dict] = [
     }
 ]
 
-FFPROBE_TIMEOUT = 15  # seconds per URL probe — Wowza needs more time to respond
+FFPROBE_TIMEOUT = 15  # seconds per URL probe - Wowza needs more time to respond
 
 MYT_PAGE = "https://www.myt.mu/sinformer/trafficwatch/"
 
@@ -97,12 +97,12 @@ def _scrape_live_urls() -> dict[str, str]:
     """
     Fetch the MYT traffic watch page and extract live .m3u8 URLs.
     Returns a dict mapping camera_id → url for any streams found.
-    Silently returns {} on any error — scraping is best-effort.
+    Silently returns {} on any error - scraping is best-effort.
     """
     try:
         import requests
     except ImportError:
-        logger.warning("[trafficwatch] requests not installed — skipping live URL scrape.")
+        logger.warning("[trafficwatch] requests not installed - skipping live URL scrape.")
         return {}
 
     logger.info("[trafficwatch] Scraping live URLs from %s …", MYT_PAGE)
@@ -208,10 +208,10 @@ def _resolve_source(
     scraped: dict[str, str] | None = None,
 ) -> tuple[str, bool]:
 
-    # Fast path: camera has a known-good URL — skip all probing.
+    # Fast path: camera has a known-good URL - skip all probing.
     if "source_override" in cam:
         url = cam["source_override"]
-        logger.info("  [%s] source_override set — using %s (unvalidated)", cam["camera_id"], url)
+        logger.info("  [%s] source_override set - using %s (unvalidated)", cam["camera_id"], url)
         return url, False
 
     base = cam["stream_base"]
@@ -233,7 +233,7 @@ def _resolve_source(
 
     if not ffprobe_ok:
         primary = candidates[0]
-        logger.info("  [%s] ffprobe unavailable — using %s (unvalidated)", cid, primary)
+        logger.info("  [%s] ffprobe unavailable - using %s (unvalidated)", cid, primary)
         return primary, False
 
     for url in candidates:
@@ -243,8 +243,8 @@ def _resolve_source(
             return url, True
         logger.info("  [%s] → no video streams", cid)
 
-    # All candidates failed — still return primary so the pipeline can try anyway
-    logger.warning("  [%s] All candidates failed ffprobe — returning primary unvalidated.", cid)
+    # All candidates failed - still return primary so the pipeline can try anyway
+    logger.warning("  [%s] All candidates failed ffprobe - returning primary unvalidated.", cid)
     return candidates[0], False
 
 
@@ -253,18 +253,18 @@ def _resolve_source(
 def discover_cameras() -> list[dict]:
 
     logger.info("=" * 62)
-    logger.info("[trafficwatch] MYT Traffic Watch — camera discovery")
+    logger.info("[trafficwatch] MYT Traffic Watch - camera discovery")
     logger.info("  Source: https://www.myt.mu/sinformer/trafficwatch/")
     logger.info("=" * 62)
 
     if not MYT_CAMERAS:
-        logger.error("[trafficwatch] MYT_CAMERAS list is empty — returning fallback.")
+        logger.error("[trafficwatch] MYT_CAMERAS list is empty - returning fallback.")
         return FALLBACK_CAMERAS
 
     # Check ffprobe once for all cameras
     ffprobe_ok = _ffprobe_available()
     if ffprobe_ok:
-        logger.info("[trafficwatch] ffprobe detected — will validate each stream URL.")
+        logger.info("[trafficwatch] ffprobe detected - will validate each stream URL.")
     else:
         logger.warning(
             "[trafficwatch] ffprobe not found on PATH.\n"
@@ -296,7 +296,7 @@ def discover_cameras() -> list[dict]:
     # If ffprobe found nothing, scrape live URLs and retry unvalidated cameras
     if ffprobe_ok and n_validated == 0:
         logger.warning(
-            "[trafficwatch] All %d stream(s) failed ffprobe — scraping MYT page for fresh URLs.",
+            "[trafficwatch] All %d stream(s) failed ffprobe - scraping MYT page for fresh URLs.",
             len(MYT_CAMERAS),
         )
         scraped = _scrape_live_urls()
@@ -318,7 +318,7 @@ def discover_cameras() -> list[dict]:
             n_validated = sum(1 for c in cameras if c["validated"])
 
     logger.info(
-        "[trafficwatch] Discovery complete — %d camera(s), %d validated.",
+        "[trafficwatch] Discovery complete - %d camera(s), %d validated.",
         len(cameras), n_validated,
     )
     return cameras

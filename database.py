@@ -1,7 +1,7 @@
 """
-Author : Mokshan Mehess (22703417) — Document Lead
+Author : Mokshan Mehess (22703417) - Document Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System
+Team   : IBL Group - Traffic Bottleneck Detection System
 """
 
 from __future__ import annotations
@@ -38,12 +38,12 @@ def _postgres_reachable() -> bool:
 
 if not PASSWORD:
     logger.warning(
-        "[db] DB_PASSWORD is not set — starting without persistence. "
+        "[db] DB_PASSWORD is not set - starting without persistence. "
         "Add DB_PASSWORD to your .env file to enable the database."
     )
 elif not _postgres_reachable():
     logger.warning(
-        "[db] PostgreSQL not reachable at %s:%d — starting without persistence. "
+        "[db] PostgreSQL not reachable at %s:%d - starting without persistence. "
         "Set DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME to connect.",
         HOST, PORT,
     )
@@ -65,4 +65,4 @@ else:
         DB_AVAILABLE = True
         logger.info("[db] Engine ready → %s:%d/%s", HOST, PORT, DB_NAME)
     except Exception as exc:
-        logger.warning("[db] SQLAlchemy setup failed — starting without persistence: %s", exc)
+        logger.warning("[db] SQLAlchemy setup failed - starting without persistence: %s", exc)

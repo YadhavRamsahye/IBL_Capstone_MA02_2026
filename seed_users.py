@@ -2,12 +2,12 @@
 seed_users.py
 Create the initial administrator account.
 
-Author : Mokshan Mehess (22703417) — Document Lead
+Author : Mokshan Mehess (22703417) - Document Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System
+Team   : IBL Group - Traffic Bottleneck Detection System
 
 Changes from the previous version:
-  * Credentials come from the environment, not a hardcoded literal — the
+  * Credentials come from the environment, not a hardcoded literal - the
     database password was previously committed to source.
   * Passwords are prompted for rather than defined in the file. The old
     version shipped `admin/admin123` and `user/password` in plain text, and
@@ -44,7 +44,7 @@ def prompt_credentials() -> tuple[str, str]:
     while True:
         pw = getpass.getpass("Password: ")
         if len(pw) < MIN_PASSWORD_LEN:
-            print(f"  Too short — minimum {MIN_PASSWORD_LEN} characters.")
+            print(f"  Too short - minimum {MIN_PASSWORD_LEN} characters.")
             continue
         if pw != getpass.getpass("Confirm password: "):
             print("  Passwords do not match.")

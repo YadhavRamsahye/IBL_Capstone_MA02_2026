@@ -2,12 +2,12 @@
 check_db.py
 Diagnose the database setup and say exactly which step is outstanding.
 
-Author : Mokshan Mehess (22703417) — Document Lead
+Author : Mokshan Mehess (22703417) - Document Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System
+Team   : IBL Group - Traffic Bottleneck Detection System
 
-Walks the chain in order — port open, credentials valid, database exists,
-schema applied, admin user seeded, data flowing — and stops at the first
+Walks the chain in order - port open, credentials valid, database exists,
+schema applied, admin user seeded, data flowing - and stops at the first
 failure with the command that fixes it. Credentials come from .env; the
 previous version had the password hardcoded and queried pre-rewrite column
 names ("LastLogin", "isActive"), so it could not run against the current schema.
@@ -125,7 +125,7 @@ async def check() -> None:
 
         print()
         if snaps == 0:
-            print(f"{INFO}No snapshots recorded yet — everything above is ready.")
+            print(f"{INFO}No snapshots recorded yet - everything above is ready.")
             print(f"{INFO}Start the app and let it run; Analytics fills in from here.")
         else:
             print(f"{OK}{snaps:,} snapshots across {cams} camera(s), {incs} incident(s)")
@@ -144,7 +144,7 @@ async def check() -> None:
                           f"avg {r['avg_count']:>5} vehicles  "
                           f"latest {r['latest'].strftime('%H:%M:%S')}")
             else:
-                print(f"\n{INFO}Nothing in the last hour — is the detector running?")
+                print(f"\n{INFO}Nothing in the last hour - is the detector running?")
     finally:
         await conn.close()
 

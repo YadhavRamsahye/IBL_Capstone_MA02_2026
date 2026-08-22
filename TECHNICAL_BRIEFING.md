@@ -1,4 +1,4 @@
-# Technical Briefing — AI Traffic Bottleneck Detection System
+# Technical Briefing - AI Traffic Bottleneck Detection System
 **IBL Capstone Project MA02 2026**
 *Last updated: 2026-04-27*
 
@@ -8,15 +8,15 @@
 
 1. [System Overview](#1-system-overview)
 2. [Project Folder Structure](#2-project-folder-structure)
-3. [Detection Pipeline — How the AI Works](#3-detection-pipeline--how-the-ai-works)
-4. [Camera Discovery — trafficwatch.py](#4-camera-discovery--trafficwatchpy)
-5. [Incident Detection — incident_detector.py](#5-incident-detection--incident_detectorpy)
-6. [Claude AI Integration — claude_api.py](#6-claude-ai-integration--claude_apipy)
-7. [FastAPI Backend — main.py](#7-fastapi-backend--mainpy)
-8. [Database — database.py, schema.sql](#8-database--databasepy-schemasql)
-9. [Frontend — map.html](#9-frontend--maphtml)
-10. [Analytics — analytics.html](#10-analytics--analyticshtml)
-11. [Authentication — login.html, signup.html](#11-authentication--loginhtml-signuphtml)
+3. [Detection Pipeline - How the AI Works](#3-detection-pipeline--how-the-ai-works)
+4. [Camera Discovery - trafficwatch.py](#4-camera-discovery--trafficwatchpy)
+5. [Incident Detection - incident_detector.py](#5-incident-detection--incident_detectorpy)
+6. [Claude AI Integration - claude_api.py](#6-claude-ai-integration--claude_apipy)
+7. [FastAPI Backend - main.py](#7-fastapi-backend--mainpy)
+8. [Database - database.py, schema.sql](#8-database--databasepy-schemasql)
+9. [Frontend - map.html](#9-frontend--maphtml)
+10. [Analytics - analytics.html](#10-analytics--analyticshtml)
+11. [Authentication - login.html, signup.html](#11-authentication--loginhtml-signuphtml)
 12. [Configuration and Environment](#12-configuration-and-environment)
 13. [Error Handling and Resilience](#13-error-handling-and-resilience)
 14. [Known Limitations and Future Improvements](#14-known-limitations-and-future-improvements)
@@ -31,7 +31,7 @@ This is a real-time AI-powered traffic monitoring system for Port Louis, Mauriti
 
 When congestion is detected, the system calls the Claude AI API (Anthropic) to generate a plain-English traffic summary that appears in the dashboard's alert panel. An incident detection engine runs in parallel, looking for patterns such as sudden traffic spikes, sustained bottlenecks, and rapid buildups, and raises incidents that are shown in the sidebar and dispatched as alerts.
 
-### Complete Data Flow — Step by Step
+### Complete Data Flow - Step by Step
 
 ```
 1. App starts → lifespan() runs discover_cameras()
@@ -168,9 +168,9 @@ When congestion is detected, the system calls the Claude AI API (Anthropic) to g
 | FFmpeg | system binary | HLS stream frame extraction via subprocess |
 | NumPy | latest | Raw video buffer handling |
 | Anthropic SDK | latest | Claude AI API for traffic summaries |
-| SQLAlchemy (async) | — | ORM for PostgreSQL queries |
-| asyncpg | — | Async PostgreSQL driver |
-| PostgreSQL | — | Persistent storage for snapshots, events, users |
+| SQLAlchemy (async) | - | ORM for PostgreSQL queries |
+| asyncpg | - | Async PostgreSQL driver |
+| PostgreSQL | - | Persistent storage for snapshots, events, users |
 | Jinja2 | 3.1.4 | Server-side HTML templating |
 | Leaflet.js | 1.9.4 | Interactive map rendering in browser |
 | Chart.js | 4.4.0 | Analytics charts |
@@ -194,7 +194,7 @@ IBL_Capstone_MA02_2026/
 │
 ├── detection/                            Package: all AI detection code
 │   ├── __init__.py                       Empty package marker
-│   ├── hls_pipeline.py        ★ CRITICAL  HLS stream processing — reconnect-per-frame strategy
+│   ├── hls_pipeline.py        ★ CRITICAL  HLS stream processing - reconnect-per-frame strategy
 │   ├── pipeline.py                       RTSP/local video pipeline (OpenCV VideoCapture)
 │   ├── mock_pipeline.py                  Simulated traffic generator for testing/fallback
 │   ├── trafficwatch.py        ★ CRITICAL  MYT camera catalogue and URL discovery
@@ -231,23 +231,23 @@ IBL_Capstone_MA02_2026/
 
 ---
 
-## 3. Detection Pipeline — How the AI Works
+## 3. Detection Pipeline - How the AI Works
 
 ### How `pipeline.py` Works (RTSP / Local Video)
 
 `pipeline.py` is the original detection pipeline designed for RTSP camera streams or local video files. It uses OpenCV's `VideoCapture` to open a continuous video stream, reads frames at up to 15 fps, and processes every second frame (FRAME_SKIP=2) to reduce CPU load.
 
-It uses `yolov8n.pt` (the nano model — fastest, lowest accuracy) and does not apply any image preprocessing. Vehicle classes are limited to `{2, 3, 5, 7}` (car, motorcycle, bus, truck). When the stream drops, it retries up to 3 times with a 5-second delay. This pipeline is **not currently used** for the MYT cameras, which require HLS rather than RTSP, but it remains available for local video file testing or future RTSP-capable cameras.
+It uses `yolov8n.pt` (the nano model - fastest, lowest accuracy) and does not apply any image preprocessing. Vehicle classes are limited to `{2, 3, 5, 7}` (car, motorcycle, bus, truck). When the stream drops, it retries up to 3 times with a 5-second delay. This pipeline is **not currently used** for the MYT cameras, which require HLS rather than RTSP, but it remains available for local video file testing or future RTSP-capable cameras.
 
 ### How `hls_pipeline.py` Works in Detail
 
 #### The Reconnect-Per-Frame Strategy
 
-Wowza streaming servers (which MYT uses) terminate persistent TCP connections after a short time — typically 30–60 seconds. If you open an ffmpeg pipe and leave it running, Wowza silently drops the connection and ffmpeg stalls waiting for data that never arrives. The entire detection loop freezes.
+Wowza streaming servers (which MYT uses) terminate persistent TCP connections after a short time - typically 30–60 seconds. If you open an ffmpeg pipe and leave it running, Wowza silently drops the connection and ffmpeg stalls waiting for data that never arrives. The entire detection loop freezes.
 
 The solution implemented here is **reconnect-per-frame**: instead of keeping one ffmpeg process alive, a brand-new ffmpeg subprocess is spawned for every single frame. The process opens the HLS playlist, downloads just enough of the stream to decode one video frame, writes it to stdout as raw bytes, and exits. The detection loop then sleeps for two seconds and repeats. Wowza never sees a connection held long enough to drop it.
 
-This approach has a startup cost per frame (roughly 1–2 seconds for ffmpeg to connect and find a keyframe), which is why the frame interval is 2 seconds rather than continuous. The trade-off is accepted because reliability is more important than frame rate for traffic monitoring — we need accurate counts every few seconds, not video playback.
+This approach has a startup cost per frame (roughly 1–2 seconds for ffmpeg to connect and find a keyframe), which is why the frame interval is 2 seconds rather than continuous. The trade-off is accepted because reliability is more important than frame rate for traffic monitoring - we need accurate counts every few seconds, not video playback.
 
 #### What `_grab_single_frame()` Does
 
@@ -283,15 +283,15 @@ The raw bytes received are exactly `width × height × 3` bytes. NumPy reshapes 
 
 After a successful frame grab but before YOLO inference, two preprocessing steps run:
 
-**Step 1 — Brightness boost (dark frames only):**
+**Step 1 - Brightness boost (dark frames only):**
 ```python
 mean_brightness = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean()
 if mean_brightness < 80:
     frame = cv2.convertScaleAbs(frame, alpha=1.3, beta=20)
 ```
-This converts the frame to grayscale to measure mean pixel brightness. If the average is below 80 (out of 255), the frame is considered dark/night-time. `convertScaleAbs` then multiplies every pixel by 1.3 (30% brighter) and adds 20 to the baseline. This lifts partially lit vehicles — which YOLO often misses entirely in their dark state — into a detectable brightness range. The check prevents this from running on daytime footage, which would oversaturate it.
+This converts the frame to grayscale to measure mean pixel brightness. If the average is below 80 (out of 255), the frame is considered dark/night-time. `convertScaleAbs` then multiplies every pixel by 1.3 (30% brighter) and adds 20 to the baseline. This lifts partially lit vehicles - which YOLO often misses entirely in their dark state - into a detectable brightness range. The check prevents this from running on daytime footage, which would oversaturate it.
 
-**Step 2 — CLAHE (Contrast Limited Adaptive Histogram Equalization):**
+**Step 2 - CLAHE (Contrast Limited Adaptive Histogram Equalization):**
 ```python
 lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
 l, a, b = cv2.split(lab)
@@ -303,7 +303,7 @@ CLAHE is a standard computer vision technique for improving local contrast. The 
 
 #### What `SMOOTH_WINDOW` Does
 
-Raw vehicle counts fluctuate between frames due to detection noise — a vehicle partially occluded by a lamppost might be detected in one frame and missed in the next. `SMOOTH_WINDOW = 3` means the last 3 raw counts are stored in a `deque`, and the reported vehicle count is their median.
+Raw vehicle counts fluctuate between frames due to detection noise - a vehicle partially occluded by a lamppost might be detected in one frame and missed in the next. `SMOOTH_WINDOW = 3` means the last 3 raw counts are stored in a `deque`, and the reported vehicle count is their median.
 
 With a 2-second frame interval, a window of 3 covers 6 seconds. This is responsive enough to catch a real traffic change within 6 seconds while filtering out single-frame outliers. The previous value was 5 (10 seconds), which caused the count to lag significantly during rapidly changing conditions.
 
@@ -315,7 +315,7 @@ It simulates a full traffic cycle: `free → moderate → heavy → bottleneck �
 
 The output dict schema is identical to `hls_pipeline.py` output, so `main.py` can accept either without modification.
 
-**Tick rate**: `TICK_INTERVAL = 1/7.5 seconds` — simulates ~7.5 processed frames per second. This is faster than the real HLS pipeline (0.5 fps) to make the mock feel responsive during demos.
+**Tick rate**: `TICK_INTERVAL = 1/7.5 seconds` - simulates ~7.5 processed frames per second. This is faster than the real HLS pipeline (0.5 fps) to make the mock feel responsive during demos.
 
 ### How YOLOv8 Works in Simple Terms
 
@@ -327,11 +327,11 @@ YOLOv8 (You Only Look Once, version 8) is a real-time object detection neural ne
 
 - **`IOU_THRESHOLD = 0.35`**: When multiple bounding boxes overlap for the same object, Non-Maximum Suppression (NMS) removes duplicates. IOU (Intersection over Union) measures how much two boxes overlap. With IOU=0.35, if two boxes overlap by more than 35%, only the highest-confidence one is kept. Lowered from 0.45 because queued vehicles in Port Louis traffic are physically close together and their bounding boxes naturally overlap; the stricter original value was merging adjacent cars into a single detection.
 
-- **`IMGSZ = 1280`**: The input image is resized to 1280×1280 before inference. The MYT stream native resolution is approximately 1024×576. Running at 1280 means the image is slightly upscaled, giving the model more pixels to work with for small and partially visible vehicles. The trade-off is slower inference — roughly 2–4 seconds per frame on CPU.
+- **`IMGSZ = 1280`**: The input image is resized to 1280×1280 before inference. The MYT stream native resolution is approximately 1024×576. Running at 1280 means the image is slightly upscaled, giving the model more pixels to work with for small and partially visible vehicles. The trade-off is slower inference - roughly 2–4 seconds per frame on CPU.
 
 - **`VEHICLE_CLASSES = {1, 2, 3, 5, 7}`**: Only detections with these COCO class IDs are counted:
   - 1: bicycle
-  - 2: car (the primary class — most missed at night)
+  - 2: car (the primary class - most missed at night)
   - 3: motorcycle
   - 5: bus
   - 7: truck
@@ -349,7 +349,7 @@ vehicle_count >= 5   →  moderate    (orange  #f0883e)
 vehicle_count >= 0   →  free        (green   #23c55e)
 ```
 
-These thresholds are calibrated for Port Louis road geometry — the monitored cameras cover 2–4 lane urban roads where 30+ vehicles in frame represents a genuine standstill. The thresholds are consistent across both the HLS pipeline and the mock pipeline to ensure that the severity levels displayed on the map match what a human observer would visually classify.
+These thresholds are calibrated for Port Louis road geometry - the monitored cameras cover 2–4 lane urban roads where 30+ vehicles in frame represents a genuine standstill. The thresholds are consistent across both the HLS pipeline and the mock pipeline to ensure that the severity levels displayed on the map match what a human observer would visually classify.
 
 ### What `possible_incident` Detection Does
 
@@ -380,7 +380,7 @@ When either check is true, `possible_incident=True` is set in the result dict. T
 
 ---
 
-## 4. Camera Discovery — trafficwatch.py
+## 4. Camera Discovery - trafficwatch.py
 
 ### What MYT Traffic Watch Is
 
@@ -391,7 +391,7 @@ Each stream is available as a Wowza-generated HLS playlist at a stable URL like:
 https://stream.myt.mu/prod/CAUDAN_SOUTH.stream_720p/playlist.m3u8
 ```
 
-This playlist file references chunklist files (like `chunklist.m3u8`), which in turn reference individual `.ts` segment files that rotate every few seconds. The chunklist URLs contain a session-specific number (e.g., `chunklist_w674657069.m3u8`) that changes each session — which is why we use `playlist.m3u8` as the stable entry point wherever possible.
+This playlist file references chunklist files (like `chunklist.m3u8`), which in turn reference individual `.ts` segment files that rotate every few seconds. The chunklist URLs contain a session-specific number (e.g., `chunklist_w674657069.m3u8`) that changes each session - which is why we use `playlist.m3u8` as the stable entry point wherever possible.
 
 ### How `discover_cameras()` Works Step by Step
 
@@ -399,7 +399,7 @@ This playlist file references chunklist files (like `chunklist.m3u8`), which in 
 
 2. **Checks ffprobe availability** (`_ffprobe_available()`): runs `ffprobe -version` and checks the return code. ffprobe is the companion tool bundled with ffmpeg.
 
-3. **First pass — resolves a URL for each camera** by calling `_resolve_source(cam, ffprobe_ok)`:
+3. **First pass - resolves a URL for each camera** by calling `_resolve_source(cam, ffprobe_ok)`:
    - If the camera dict has a `source_override` key, that URL is returned immediately (skipping all probing). Used for La Chaussee to go straight to the known-working chunklist URL.
    - Otherwise, builds a candidate list: `playlist.m3u8` → `chunklist.m3u8` → hardcoded fallback chunklist URL → scraped URL (if available)
    - If ffprobe is available, tries each candidate with `_validate_with_ffprobe(url)`. The first URL that returns at least one video stream is accepted.
@@ -424,18 +424,18 @@ data = json.loads(result.stdout)
 has_video = any(s.get("codec_type") == "video" for s in data.get("streams", []))
 ```
 
-ffprobe opens the URL and reports all media streams it finds. If at least one stream has `codec_type == "video"`, the URL is considered valid. The timeout is 15 seconds — Wowza servers sometimes take several seconds to respond to the initial playlist request, so a shorter timeout would cause false validation failures.
+ffprobe opens the URL and reports all media streams it finds. If at least one stream has `codec_type == "video"`, the URL is considered valid. The timeout is 15 seconds - Wowza servers sometimes take several seconds to respond to the initial playlist request, so a shorter timeout would cause false validation failures.
 
 ### URL Candidate Priority Order
 
 For most cameras:
-1. `{stream_base}/playlist.m3u8` — stable master playlist (preferred)
-2. `{stream_base}/chunklist.m3u8` — direct chunklist without session ID
-3. `{stream_base}/chunklist_w{id}.m3u8` — hardcoded rotating chunklist (last-resort)
+1. `{stream_base}/playlist.m3u8` - stable master playlist (preferred)
+2. `{stream_base}/chunklist.m3u8` - direct chunklist without session ID
+3. `{stream_base}/chunklist_w{id}.m3u8` - hardcoded rotating chunklist (last-resort)
 4. Scraped URL from MYT page (if scraping succeeded and produced a match)
 
 For La Chaussee specifically (`source_override` + `url_candidates`):
-1. `chunklist.m3u8` — known to be more reliable than playlist for this camera
+1. `chunklist.m3u8` - known to be more reliable than playlist for this camera
 2. `playlist.m3u8`
 3. `chunklist_w228974167.m3u8`
 
@@ -454,13 +454,13 @@ These scraped URLs are injected as a 4th candidate in the next validation round.
 
 If every candidate fails and scraping also fails:
 - `_resolve_source()` returns the primary candidate (`playlist.m3u8`) with `validated=False`
-- The camera is included in the returned list anyway — the HLS pipeline will attempt it
+- The camera is included in the returned list anyway - the HLS pipeline will attempt it
 - `_hls_camera_loop` retries up to 5 times with 60-second delays
 - After 5 failures, the camera temporarily uses mock data and retries HLS in the background
 
 ---
 
-## 5. Incident Detection — incident_detector.py
+## 5. Incident Detection - incident_detector.py
 
 ### What the 6 Incident Types Are and What Triggers Each
 
@@ -481,12 +481,12 @@ This sliding window approach means the system always has a 10-reading context (~
 
 ### How Confidence Scores Are Calculated
 
-- **`sudden_congestion`**: `min(0.95, 0.60 + spike / 40.0)` — a spike of 6 vehicles gives 0.75, a spike of 14 gives 0.95.
-- **`sustained_bottleneck`**: `min(0.95, 0.65 + streak * 0.05)` — a 2-reading streak gives 0.75, a 6-reading streak gives 0.95.
+- **`sudden_congestion`**: `min(0.95, 0.60 + spike / 40.0)` - a spike of 6 vehicles gives 0.75, a spike of 14 gives 0.95.
+- **`sustained_bottleneck`**: `min(0.95, 0.65 + streak * 0.05)` - a 2-reading streak gives 0.75, a 6-reading streak gives 0.95.
 - **`road_blockage`**: fixed at 0.82.
-- **`rapid_buildup`**: `min(0.80, 0.50 + total_rise / 40.0)` — a 12-vehicle rise gives 0.80 (capped).
-- **`camera_freeze`**: fixed at 1.0 — if the watchdog raises it, there is certainty.
-- **`night_low_visibility`**: fixed at 0.65 — moderate certainty since zeros can also occur legitimately.
+- **`rapid_buildup`**: `min(0.80, 0.50 + total_rise / 40.0)` - a 12-vehicle rise gives 0.80 (capped).
+- **`camera_freeze`**: fixed at 1.0 - if the watchdog raises it, there is certainty.
+- **`night_low_visibility`**: fixed at 0.65 - moderate certainty since zeros can also occur legitimately.
 
 ### How Auto-Resolution Works
 
@@ -520,7 +520,7 @@ Increasing `SPIKE_THRESHOLD` makes sudden_congestion less sensitive (requires a 
 
 ---
 
-## 6. Claude AI Integration — claude_api.py
+## 6. Claude AI Integration - claude_api.py
 
 ### What the Claude API Is and Why It Is Used
 
@@ -539,12 +539,12 @@ It has a `from_dict()` classmethod so pipeline dicts can be converted with a sin
 ### How `TrafficSummaryService` Works
 
 A single shared instance `summary_service` is created at module level and imported by `main.py`. It maintains:
-- `_cache: dict[camera_id → TrafficSummary]` — last successful summary per camera
-- `_consecutive_failures: int` — tracks API failure streak for logging
+- `_cache: dict[camera_id → TrafficSummary]` - last successful summary per camera
+- `_consecutive_failures: int` - tracks API failure streak for logging
 
 The two public methods are:
-- `generate_summary(detection)` — general traffic status summary
-- `generate_alert_description(detection)` — urgent alert text for heavy/bottleneck events
+- `generate_summary(detection)` - general traffic status summary
+- `generate_alert_description(detection)` - urgent alert text for heavy/bottleneck events
 
 Both delegate to `_try_claude_api()` with different `prompt_type` values.
 
@@ -562,10 +562,10 @@ Rules:
   in Mauritius.
 - Use professional but accessible language (no jargon).
 - Do NOT include timestamps, technical details, or markdown formatting.
-- Do NOT start with 'Sure' or any preamble — go straight to the summary.
+- Do NOT start with 'Sure' or any preamble - go straight to the summary.
 ```
 
-The model used is `claude-sonnet-4-20250514` with `max_tokens=200` — sufficient for 2–3 sentences.
+The model used is `claude-sonnet-4-20250514` with `max_tokens=200` - sufficient for 2–3 sentences.
 
 ### How the Exponential Backoff Retry Works
 
@@ -583,7 +583,7 @@ Attempt 2: call Claude API
   → Fail: give up → return template fallback
 ```
 
-The delay formula is: `min(1.0 × 2^attempt, 16.0)` seconds with ±25% random jitter. The cap of 16 seconds prevents excessively long waits on later retries. After 3 failed attempts, the template fallback is returned — the API is never retried for this specific call.
+The delay formula is: `min(1.0 × 2^attempt, 16.0)` seconds with ±25% random jitter. The cap of 16 seconds prevents excessively long waits on later retries. After 3 failed attempts, the template fallback is returned - the API is never retried for this specific call.
 
 ### What Template Fallback Is and When It Activates
 
@@ -595,7 +595,7 @@ The template fallback generates summaries from hardcoded string templates, requi
 Example template output for `heavy` severity at `caudan_north`:
 > "Heavy congestion detected at Caudan North with 22 vehicles in the detection zone. Try the A1 motorway northbound or the Quay D waterfront detour."
 
-The fallback result is cached exactly like a real API result — the dashboard always has something to display.
+The fallback result is cached exactly like a real API result - the dashboard always has something to display.
 
 ### How the 30-Second Cooldown Works
 
@@ -622,13 +622,13 @@ The `_cache` dict maps each `camera_id` to the most recently generated `TrafficS
 
 ---
 
-## 7. FastAPI Backend — main.py
+## 7. FastAPI Backend - main.py
 
 ### What FastAPI Is in Simple Terms
 
 FastAPI is a modern Python web framework for building APIs. It uses Python's `async`/`await` syntax to handle many simultaneous requests without blocking, unlike traditional frameworks that handle one request at a time per thread. It automatically generates API documentation, validates request/response types, and handles WebSocket connections natively.
 
-Uvicorn is the server that runs FastAPI — it's the process you actually start (`uvicorn main:app`).
+Uvicorn is the server that runs FastAPI - it's the process you actually start (`uvicorn main:app`).
 
 ### How the Lifespan Startup Works
 
@@ -667,7 +667,7 @@ async def lifespan(app: FastAPI):
 | GET | `/logout` | Clears session, redirects to `/login` | Logout button |
 | GET | `/map` | HTML map dashboard (auth required) | Browser |
 | GET | `/analytics` | HTML analytics page (auth required) | Browser |
-| GET | `/api/traffic` | `dict[camera_id, detection_dict]` — all cameras | map.html initial load |
+| GET | `/api/traffic` | `dict[camera_id, detection_dict]` - all cameras | map.html initial load |
 | GET | `/api/traffic/{id}` | Single camera detection dict | On-demand queries |
 | GET | `/api/status` | `{active_cameras, total_detections, bottlenecks, system}` | map.html every 10s |
 | GET | `/api/cameras` | List of camera dicts with live state | map.html on init |
@@ -692,7 +692,7 @@ while True:
 
 It pushes the full `latest_detections` dict to every connected browser every second. The browser applies the data immediately without waiting for the next poll cycle.
 
-**Why better than polling**: HTTP polling (making a GET request every N seconds) introduces latency of up to N seconds before the browser sees an update. With WebSocket, the browser sees each update within ~1 second of it being stored in `latest_detections`. This makes the severity badges and map markers feel live rather than laggy. WebSockets also reduce HTTP overhead — one persistent connection instead of a new TCP connection every few seconds.
+**Why better than polling**: HTTP polling (making a GET request every N seconds) introduces latency of up to N seconds before the browser sees an update. With WebSocket, the browser sees each update within ~1 second of it being stored in `latest_detections`. This makes the severity badges and map markers feel live rather than laggy. WebSockets also reduce HTTP overhead - one persistent connection instead of a new TCP connection every few seconds.
 
 The browser reconnects automatically if the WebSocket drops:
 ```javascript
@@ -710,13 +710,13 @@ Authentication uses server-side sessions stored in signed cookies via the `Sessi
 5. Protected routes (`/map`, `/analytics`) redirect to `/login` if `get_current_user` returns `None`
 6. `GET /logout` calls `request.session.clear()` which removes the session cookie
 
-The secret key is `"traffic-mauritius-secret-key-2026"` — hardcoded. In production this must be a random secret loaded from the environment.
+The secret key is `"traffic-mauritius-secret-key-2026"` - hardcoded. In production this must be a random secret loaded from the environment.
 
 Demo credentials (hardcoded in `DEMO_USERS`):
 - `admin` / `admin123`
 - `user` / `password`
 
-### How `_process_detection()` Works — The Full Hook Pipeline
+### How `_process_detection()` Works - The Full Hook Pipeline
 
 This coroutine is called after every detection result is stored. It chains several operations:
 
@@ -735,7 +735,7 @@ This coroutine is called after every detection result is stored. It chains sever
        append to alert_log
 ```
 
-Note that `create_task()` schedules the DB writes without awaiting them — the function continues immediately. This prevents a slow database from delaying the detection loop.
+Note that `create_task()` schedules the DB writes without awaiting them - the function continues immediately. This prevents a slow database from delaying the detection loop.
 
 ### How Alert Generation Works
 
@@ -743,7 +743,7 @@ Alerts end up in `alert_log` (a Python list) via two paths:
 1. **Incident-triggered**: every new incident (e.g., `sudden_congestion`) appends an alert immediately using the incident's description text, no Claude call required.
 2. **Severity-transition triggered**: when a camera transitions to heavy or bottleneck, `generate_alert_description()` is called and the Claude-generated text is appended.
 
-`/api/alerts` returns `alert_log[-limit:][::-1]` — the most recent N alerts, newest first.
+`/api/alerts` returns `alert_log[-limit:][::-1]` - the most recent N alerts, newest first.
 
 ### How `_last_severity` and `_last_summary_time` Prevent API Spam
 
@@ -773,7 +773,7 @@ async def api_demo_escalate():
     return {"ok": True}
 ```
 
-This directly injects a fake bottleneck reading into `latest_detections` and triggers the full processing pipeline (DB writes, incident detection, Claude alert). The WebSocket broadcasts it to all connected browsers within 1 second, turning the Caudan North marker purple and triggering the alert panel — useful for demonstrating the system without waiting for real traffic conditions.
+This directly injects a fake bottleneck reading into `latest_detections` and triggers the full processing pipeline (DB writes, incident detection, Claude alert). The WebSocket broadcasts it to all connected browsers within 1 second, turning the Caudan North marker purple and triggering the alert panel - useful for demonstrating the system without waiting for real traffic conditions.
 
 ### How Database Writes Work and What Happens When DB Is Unavailable
 
@@ -783,11 +783,11 @@ if not DB_AVAILABLE or _AsyncSession is None:
     return
 ```
 
-If PostgreSQL is unavailable, the function exits immediately — no error, no crash, no log spam. When DB is available, they use SQLAlchemy async sessions to upsert camera records and insert snapshot/event rows. Errors during the write are caught and logged as warnings, not exceptions, so a DB write failure never crashes the detection loop.
+If PostgreSQL is unavailable, the function exits immediately - no error, no crash, no log spam. When DB is available, they use SQLAlchemy async sessions to upsert camera records and insert snapshot/event rows. Errors during the write are caught and logged as warnings, not exceptions, so a DB write failure never crashes the detection loop.
 
 ---
 
-## 8. Database — database.py, schema.sql
+## 8. Database - database.py, schema.sql
 
 ### Every Table Explained
 
@@ -810,7 +810,7 @@ Stores the camera registry (populated by `_save_snapshot()` on first detection).
 - `RegisteredAt`, `LastSeen` (TIMESTAMPTZ): lifecycle timestamps
 
 **`TrafficSnapshots`**
-One row per frame processed. High write volume — every 2 seconds per camera = ~7,200 rows/hour.
+One row per frame processed. High write volume - every 2 seconds per camera = ~7,200 rows/hour.
 - `id` (UUID): row identifier
 - `CameraId` (FK → cameras): which camera
 - `SnapshotTime` (TIMESTAMPTZ): when the frame was processed
@@ -886,11 +886,11 @@ The 3-second timeout means the application starts within 3 seconds even if Postg
 
 ### What the `DB_AVAILABLE` Flag Does
 
-Every DB-touching function in `main.py` checks `if not DB_AVAILABLE: return` at the top. This single boolean acts as a circuit breaker — when the database is down, all persistence calls are no-ops. The detection pipeline continues running, the dashboard continues displaying live data, and alerts continue generating. Only the historical record is lost.
+Every DB-touching function in `main.py` checks `if not DB_AVAILABLE: return` at the top. This single boolean acts as a circuit breaker - when the database is down, all persistence calls are no-ops. The detection pipeline continues running, the dashboard continues displaying live data, and alerts continue generating. Only the historical record is lost.
 
 ---
 
-## 9. Frontend — map.html
+## 9. Frontend - map.html
 
 ### How Leaflet.js Is Used for the Map
 
@@ -911,7 +911,7 @@ cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
     .bindPopup(...)
 ```
 
-`camIcon(color)` creates an `L.divIcon` — a small circle with a glow shadow in the severity colour:
+`camIcon(color)` creates an `L.divIcon` - a small circle with a glow shadow in the severity colour:
 ```javascript
 html: `<div style="width:16px;height:16px;background:${color};border:2.5px solid #fff;
        border-radius:50%;box-shadow:0 0 10px ${color},0 0 4px rgba(0,0,0,.6);"></div>`
@@ -933,7 +933,7 @@ function connectWS() {
 }
 ```
 
-`window.location.host` dynamically picks up the server's hostname and port — whether the user accesses via `localhost:8000` or a LAN IP address like `192.168.1.5:8000`, the WebSocket URL is always correct.
+`window.location.host` dynamically picks up the server's hostname and port - whether the user accesses via `localhost:8000` or a LAN IP address like `192.168.1.5:8000`, the WebSocket URL is always correct.
 
 On message received, the JSON is parsed and passed directly to `applyTrafficData()`. On close or error, a 3-second delay fires before reconnecting, preventing a tight reconnection loop if the server is temporarily unavailable.
 
@@ -1016,7 +1016,7 @@ Two `L.tileLayer` objects are defined. A control button toggles between them by 
 
 ---
 
-## 10. Analytics — analytics.html
+## 10. Analytics - analytics.html
 
 ### What Chart.js Is
 
@@ -1052,13 +1052,13 @@ This creates a morning rush peak (around 07:00–09:00) and an evening peak (aro
 
 ---
 
-## 11. Authentication — login.html, signup.html
+## 11. Authentication - login.html, signup.html
 
 ### How the Login Flow Works End to End
 
 1. User visits any protected route (e.g., `/map`)
 2. `get_current_user(request)` returns `None` (no session) → `RedirectResponse(url="/login")`
-3. Browser renders `login.html` — a Jinja2 template
+3. Browser renders `login.html` - a Jinja2 template
 4. User types credentials and submits `POST /login`
 5. FastAPI reads `username` and `password` from form data
 6. `DEMO_USERS` dict is checked: `if username in DEMO_USERS and DEMO_USERS[username] == password`
@@ -1087,7 +1087,7 @@ FastAPI passes `error` and `success` as template context variables. If `error` i
 | `admin` | `admin123` | admin |
 | `user` | `password` | user |
 
-These are displayed on the login page itself in a "Demo Credentials" box. Both credentials give identical access to all features — the role distinction is defined in the database schema but not enforced by the current application code.
+These are displayed on the login page itself in a "Demo Credentials" box. Both credentials give identical access to all features - the role distinction is defined in the database schema but not enforced by the current application code.
 
 ---
 
@@ -1101,31 +1101,31 @@ These are displayed on the login page itself in a "Demo Credentials" box. Both c
 | `DB_HOST` | `localhost` | PostgreSQL server hostname (default: localhost) |
 | `DB_PORT` | `5432` | PostgreSQL port (default: 5432) |
 | `DB_USER` | `postgres` | PostgreSQL username |
-| `DB_PASSWORD` | `your-postgres-password` | PostgreSQL password. No default — the value used to be a literal committed to source; it now must be set in `.env` or persistence stays off. |
+| `DB_PASSWORD` | `your-postgres-password` | PostgreSQL password. No default - the value used to be a literal committed to source; it now must be set in `.env` or persistence stays off. |
 | `DB_NAME` | `trafficsystem` | Database name |
 
-`DB_HOST`, `DB_PORT` and `DB_USER` have sane defaults in `database.py`. `DB_PASSWORD` does not — leaving it unset is a supported "no persistence" mode, not a misconfiguration. `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY`, depending on `SUMMARY_PROVIDER`) is the only variable strictly required for AI-generated (non-template) summaries.
+`DB_HOST`, `DB_PORT` and `DB_USER` have sane defaults in `database.py`. `DB_PASSWORD` does not - leaving it unset is a supported "no persistence" mode, not a misconfiguration. `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY`, depending on `SUMMARY_PROVIDER`) is the only variable strictly required for AI-generated (non-template) summaries.
 
 ### What `requirements.txt` Contains and Why Each Package Is Needed
 
 ```
-fastapi==0.115.0         — Web framework, REST API, WebSocket, form handling
-uvicorn==0.30.6          — ASGI server to run FastAPI
-jinja2==3.1.4            — HTML template engine for login/map/analytics pages
-python-multipart==0.0.9  — Enables FastAPI to read HTML form POST bodies
-itsdangerous==2.2.0      — Signs session cookies securely
-ultralytics              — YOLOv8 model loading, inference, result parsing
-opencv-python-headless   — Image preprocessing (CLAHE, colour conversion)
+fastapi==0.115.0         - Web framework, REST API, WebSocket, form handling
+uvicorn==0.30.6          - ASGI server to run FastAPI
+jinja2==3.1.4            - HTML template engine for login/map/analytics pages
+python-multipart==0.0.9  - Enables FastAPI to read HTML form POST bodies
+itsdangerous==2.2.0      - Signs session cookies securely
+ultralytics              - YOLOv8 model loading, inference, result parsing
+opencv-python-headless   - Image preprocessing (CLAHE, colour conversion)
                            Headless = no GUI dependencies (server-safe)
-requests                 — HTTP client for MYT page scraping
-beautifulsoup4           — HTML parsing for scraping .m3u8 URLs from script tags
-lxml                     — Fast HTML parser used by BeautifulSoup
-selenium                 — Browser automation (available but not currently used)
-webdriver-manager        — Companion to Selenium
-numpy                    — NumPy array handling for raw video frames
-imageio-ffmpeg           — Ships ffmpeg binaries on some platforms (supplementary)
-anthropic                — Anthropic Claude API SDK
-python-dotenv            — Loads .env file into os.environ at startup
+requests                 - HTTP client for MYT page scraping
+beautifulsoup4           - HTML parsing for scraping .m3u8 URLs from script tags
+lxml                     - Fast HTML parser used by BeautifulSoup
+selenium                 - Browser automation (available but not currently used)
+webdriver-manager        - Companion to Selenium
+numpy                    - NumPy array handling for raw video frames
+imageio-ffmpeg           - Ships ffmpeg binaries on some platforms (supplementary)
+anthropic                - Anthropic Claude API SDK
+python-dotenv            - Loads .env file into os.environ at startup
 ```
 
 Note: `ffmpeg` and `ffprobe` must be installed separately as system binaries and added to PATH. They are not Python packages. Download from `https://www.gyan.dev/ffmpeg/builds/` on Windows.
@@ -1195,16 +1195,16 @@ Total: ~340 seconds (~6 minutes)
 6. `source="template_fallback"` is set in the result
 7. Dashboard displays the template text without any indication to the user that Claude was unavailable
 
-The system continues operating indefinitely without Claude API credits — summaries are simply less descriptive.
+The system continues operating indefinitely without Claude API credits - summaries are simply less descriptive.
 
 ### What Happens When PostgreSQL Is Offline
 
 1. At startup: `_postgres_reachable()` TCP probe fails (3-second timeout)
-2. `DB_AVAILABLE = False` is set — no engine is created
+2. `DB_AVAILABLE = False` is set - no engine is created
 3. All DB write functions (`_save_snapshot`, `_save_bottleneck_event`) return immediately
-4. Application starts normally, logs a single warning: `"PostgreSQL not reachable — starting without persistence"`
+4. Application starts normally, logs a single warning: `"PostgreSQL not reachable - starting without persistence"`
 5. All live data continues flowing: WebSocket, map, alerts all work
-6. Historical data is simply not saved — no snapshots or bottleneck events are persisted
+6. Historical data is simply not saved - no snapshots or bottleneck events are persisted
 
 When PostgreSQL comes back online, a server restart is required (the TCP probe only runs at startup).
 
@@ -1228,7 +1228,7 @@ Mock data is produced by `run_mock_pipeline()` when:
 
 The mock generator runs a 7-stage traffic scenario cycle (free→moderate→heavy→bottleneck→heavy→moderate→free) with random target counts and random dwell times. It yields data every ~133ms (7.5 fps simulated) and is throttled by `_POLL_INTERVAL=3.0s` in `_camera_loop`.
 
-The result dict is identical in structure to real pipeline output, with `"source": "mock"` implied by the camera's `source` field in `_active_cameras`. The map, WebSocket, alerts, and incidents all function normally with mock data — incidents can be triggered and Claude summaries are generated from the simulated counts.
+The result dict is identical in structure to real pipeline output, with `"source": "mock"` implied by the camera's `source` field in `_active_cameras`. The map, WebSocket, alerts, and incidents all function normally with mock data - incidents can be triggered and Claude summaries are generated from the simulated counts.
 
 ---
 
@@ -1237,8 +1237,8 @@ The result dict is identical in structure to real pipeline output, with `"source
 ### Current Accuracy Limitations of Night-Time Detection
 
 - YOLOv8m at `CONF_THRESHOLD=0.25` with CLAHE preprocessing improved night accuracy significantly, but partially obscured vehicles (behind poles, partially out of frame) are still missed
-- Street lighting varies by camera angle — some cameras have direct overhead illumination, others rely on ambient light from buildings. CLAHE helps with the latter but cannot recover detail that was never captured
-- The brightness threshold of 80/255 for the dark-frame boost is a global average — a frame could have bright headlights boosting the average while the majority of the frame is dark
+- Street lighting varies by camera angle - some cameras have direct overhead illumination, others rely on ambient light from buildings. CLAHE helps with the latter but cannot recover detail that was never captured
+- The brightness threshold of 80/255 for the dark-frame boost is a global average - a frame could have bright headlights boosting the average while the majority of the frame is dark
 - A potential improvement would be training a custom YOLOv8 model fine-tuned on Port Louis night footage rather than relying on COCO-pretrained weights
 
 ### Why La Chaussee Stream Is Less Reliable Than the Others

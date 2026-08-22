@@ -34,7 +34,7 @@ being untidy:
 Calibrating capacity
 --------------------
 `capacity` is "how many PCU are visible in this camera's frame when its road is
-at practical capacity" — not a road-design figure. Estimate it from footage:
+at practical capacity" - not a road-design figure. Estimate it from footage:
 take the 95th-percentile PCU load observed over a busy period. The values in
 CAMERA_CAPACITY are informed estimates from the Port Louis stream geometry, not
 measurements; see tools/calibrate_capacity.py to derive real ones.
@@ -98,7 +98,7 @@ def classify(pcu: float, camera_id: str) -> tuple[str, str, float]:
     """Classify a PCU load for a specific camera.
 
     Returns ``(severity, colour, saturation)`` where saturation is the
-    PCU-to-capacity ratio — the value that is actually comparable between
+    PCU-to-capacity ratio - the value that is actually comparable between
     cameras, and worth storing alongside the raw count.
     """
     capacity = capacity_for(camera_id)
@@ -167,7 +167,7 @@ def classify_count(vehicle_count: int, camera_id: str) -> tuple[str, str, float]
     """Classify a raw vehicle count when per-class data is unavailable.
 
     Assumes an average mix of 1.0 PCU per vehicle. Prefer ``classify`` with real
-    PCU whenever the class IDs are to hand — this exists for the mock pipeline
+    PCU whenever the class IDs are to hand - this exists for the mock pipeline
     and for callers that only ever had a count.
     """
     return classify(float(vehicle_count), camera_id)

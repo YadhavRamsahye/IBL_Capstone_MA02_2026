@@ -16,6 +16,7 @@ Module   : Dashboard UI / Templates
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Traffic Map - AI Bottleneck Detection</title>
+    <link rel="icon" type="image/jpeg" href="/static/ibl-logo.jpg">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         *, *::before, *::after {
@@ -40,9 +41,11 @@ Module   : Dashboard UI / Templates
         .navbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
         .nav-icon {
             width: 36px; height: 36px; flex-shrink: 0;
-            background: linear-gradient(135deg, #e94560, #0f3460);
+            background: #ffffff; padding: 3px;
             border-radius: 8px; display: flex; align-items: center; justify-content: center;
+            overflow: hidden;
         }
+        .nav-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
         /* min-width/overflow are load-bearing: the flex parent can shrink this
            box below the title's width, and without them the nowrap text paints
            outside its box and over .navbar-right instead of truncating. */
@@ -78,7 +81,7 @@ Module   : Dashboard UI / Templates
         }
         .logout-btn:hover { background: rgba(233,69,96,.2); }
 
-        /* Hamburger — hidden on desktop */
+        /* Hamburger - hidden on desktop */
         .hamburger-btn {
             display: none;
             background: rgba(255,255,255,.05); border: 1px solid #30363d;
@@ -159,7 +162,7 @@ Module   : Dashboard UI / Templates
         .sidebar::-webkit-scrollbar { width: 4px; }
         .sidebar::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 
-        /* Drawer close row — only visible when drawer is active */
+        /* Drawer close row - only visible when drawer is active */
         .sidebar-close-row {
             display: none; align-items: center; justify-content: space-between;
             padding: 14px 16px; border-bottom: 1px solid #30363d; flex-shrink: 0;
@@ -393,9 +396,9 @@ Module   : Dashboard UI / Templates
         /* Leaflet popup mobile tweak */
         .leaflet-popup-content { max-width: min(300px, 85vw) !important; }
 
-        /* Leaflet controls — mobile overrides */
+        /* Leaflet controls - mobile overrides */
         @media (max-width: 639px) {
-            /* Hide +/- buttons — users pinch-zoom on touch */
+            /* Hide +/- buttons - users pinch-zoom on touch */
             .leaflet-control-zoom { display: none !important; }
             /* Lift attribution + scale bar above the bottom stats bar */
             .leaflet-bottom { bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important; }
@@ -423,15 +426,11 @@ Module   : Dashboard UI / Templates
             </svg>
         </button>
         <div class="nav-icon">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <circle cx="10" cy="10" r="7" fill="rgba(255,255,255,0.15)"/>
-                <circle cx="10" cy="10" r="2" fill="white"/>
-                <path d="M6 10h2M12 10h2M10 6v2M10 12v2" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
+            <img src="/static/ibl-logo.jpg" alt="IBL Group">
         </div>
         <h1 class="brand-title">
-            <span class="title-full">AI Traffic Bottleneck Detection &mdash; <span class="brand-accent">Mauritius</span></span>
-            <span class="title-short">Traffic AI &mdash; <span class="brand-accent">Mauritius</span></span>
+            <span class="title-full">AI Traffic Bottleneck Detection - <span class="brand-accent">Mauritius</span></span>
+            <span class="title-short">Traffic AI - <span class="brand-accent">Mauritius</span></span>
         </h1>
     </div>
     <div class="navbar-right">
@@ -501,19 +500,19 @@ Module   : Dashboard UI / Templates
             <h3>Live Overview</h3>
             <div class="stat-grid">
                 <div class="stat-card success">
-                    <div class="stat-value" id="stat-cameras">—</div>
+                    <div class="stat-value" id="stat-cameras">-</div>
                     <div class="stat-label">Active Cameras</div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-value" id="stat-bottlenecks">—</div>
+                    <div class="stat-value" id="stat-bottlenecks">-</div>
                     <div class="stat-label">Bottlenecks</div>
                 </div>
                 <div class="stat-card warning">
-                    <div class="stat-value" id="stat-vehicles">—</div>
+                    <div class="stat-value" id="stat-vehicles">-</div>
                     <div class="stat-label">Total Vehicles</div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-value" id="stat-incidents">—</div>
+                    <div class="stat-value" id="stat-incidents">-</div>
                     <div class="stat-label">Active Incidents</div>
                 </div>
             </div>
@@ -540,11 +539,11 @@ Module   : Dashboard UI / Templates
     <!-- Map -->
     <div class="map-wrapper">
         <div class="map-info-bar" id="infoBar">
-            Viewing: <strong>Mauritius &mdash; MYT Traffic Watch</strong> &nbsp;|&nbsp;
+            Viewing: <strong>Mauritius - MYT Traffic Watch</strong> &nbsp;|&nbsp;
             AI Detection: <span class="live">● Live</span> &nbsp;|&nbsp;
-            Cameras: <strong id="infoActiveCams">—</strong>
+            Cameras: <strong id="infoActiveCams">-</strong>
             <span id="cameraCoverage" style="opacity:.55;font-size:11px;"></span> &nbsp;|&nbsp;
-            Vehicles: <strong id="infoVehicles">—</strong>
+            Vehicles: <strong id="infoVehicles">-</strong>
         </div>
         <div id="map"></div>
         <div class="camera-strip" id="cameraStrip"></div>
@@ -555,17 +554,17 @@ Module   : Dashboard UI / Templates
 <!-- ── MOBILE BOTTOM BAR ── -->
 <div class="mobile-bar">
     <div class="mobile-stat" onclick="openSidebar()">
-        <div class="mobile-stat-value success" id="mStat-cameras">—</div>
+        <div class="mobile-stat-value success" id="mStat-cameras">-</div>
         <div class="mobile-stat-label">Cameras</div>
     </div>
     <div class="mobile-divider"></div>
     <div class="mobile-stat" onclick="openSidebar()">
-        <div class="mobile-stat-value warning" id="mStat-vehicles">—</div>
+        <div class="mobile-stat-value warning" id="mStat-vehicles">-</div>
         <div class="mobile-stat-label">Vehicles</div>
     </div>
     <div class="mobile-divider"></div>
     <div class="mobile-stat" onclick="openSidebar()">
-        <div class="mobile-stat-value" id="mStat-incidents">—</div>
+        <div class="mobile-stat-value" id="mStat-incidents">-</div>
         <div class="mobile-stat-label">Incidents</div>
     </div>
     <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleSidebar()">
@@ -588,10 +587,10 @@ const POLL_MS  = 5000;
 
 // Seeded with correct coordinates (Fix 3); overridden/extended by fetchCameras() at init.
 const CAMERA_LOCS = {
-    caudan_north: { coords: [-20.1626, 57.4939], name: 'Caudan North',  label: 'Caudan North — Port Louis' },
-    caudan_south: { coords: [-20.1640, 57.4945], name: 'Caudan South',  label: 'Caudan South — Port Louis' },
-    la_chaussee:  { coords: [-20.1608, 57.4972], name: 'La Chaussee',   label: 'La Chaussee Street — Port Louis' },
-    casernes:     { coords: [-20.1590, 57.4960], name: 'Casernes',      label: 'Casernes / Brabant Street — Port Louis' },
+    caudan_north: { coords: [-20.1626, 57.4939], name: 'Caudan North',  label: 'Caudan North - Port Louis' },
+    caudan_south: { coords: [-20.1640, 57.4945], name: 'Caudan South',  label: 'Caudan South - Port Louis' },
+    la_chaussee:  { coords: [-20.1608, 57.4972], name: 'La Chaussee',   label: 'La Chaussee Street - Port Louis' },
+    casernes:     { coords: [-20.1590, 57.4960], name: 'Casernes',      label: 'Casernes / Brabant Street - Port Louis' },
 };
 
 const SEV_COLOR = {
@@ -685,7 +684,7 @@ function buildRegionMarker(region, entries) {
                     ${namesHtml}
                 </ul>
                 <div style="font-size:11px;color:#888;margin-top:8px;">
-                    Shown at the region centre — none of these have been checked
+                    Shown at the region centre - none of these have been checked
                     against a real road yet.
                 </div>
             </div>`);
@@ -842,7 +841,7 @@ function directionRowsHtml(det) {
     </div>`;
 }
 
-// Single source of truth for the badge — it is rendered from two places.
+// Single source of truth for the badge - it is rendered from two places.
 function incidentBadgeHtml(det) {
     if (det.possible_incident !== true) return '';
     const d = det.incident_detail || {};
@@ -962,7 +961,7 @@ function buildCameraStrip() {
                 </div>
                 <div class="strip-label">
                     <div class="strip-name">${loc.name}</div>
-                    <div class="strip-count" id="stripCount_${id}">—</div>
+                    <div class="strip-count" id="stripCount_${id}">-</div>
                 </div>
             </div>`;
     }
@@ -1133,7 +1132,7 @@ function applyTrafficData(data) {
 
             // While the popup is open, patch values in place. Calling
             // setPopupContent here would destroy the destination input the user
-            // is typing into — this runs once a second.
+            // is typing into - this runs once a second.
             const patched = marker.isPopupOpen()
                 && patchOpenPopup(id, det, color, isHeavy, hasIncident);
             if (!patched) {
@@ -1249,7 +1248,7 @@ async function fetchIncidents() {
                 <div class="incident-row" onclick="flyTo(${lat},${lng},17)">
                     <div class="incident-row-top">
                         <div class="incident-type-dot" style="background:${inc.color};box-shadow:0 0 4px ${inc.color};"></div>
-                        <span class="incident-cam">${inc.location.split('—')[0].trim()}</span>
+                        <span class="incident-cam">${inc.location.split('-')[0].trim()}</span>
                         <span class="incident-conf" style="margin-left:auto;">${Math.round(inc.confidence*100)}% conf</span>
                     </div>
                     <div class="incident-type">${typeLabel} &nbsp;·&nbsp; ${inc.vehicle_count} vehicles &nbsp;·&nbsp; ${timeAgo(inc.timestamp)}</div>
@@ -1295,7 +1294,7 @@ async function fetchAlerts() {
                     <div class="alert-dot" style="background:${a.color ?? '#e94560'};"></div>
                     <div class="alert-text">
                         <div class="alert-location">${name}</div>
-                        <div class="alert-msg">${a.severity?.toUpperCase()} — ${a.vehicle_count} vehicles</div>
+                        <div class="alert-msg">${a.severity?.toUpperCase()} - ${a.vehicle_count} vehicles</div>
                         <div class="alert-time">${new Date(a.timestamp).toLocaleTimeString()}</div>
                     </div>
                 </div>`;
@@ -1303,7 +1302,7 @@ async function fetchAlerts() {
     } catch (_) {}
 }
 
-function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val ?? '—'; }
+function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val ?? '-'; }
 
 function timeAgo(ts) {
     const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
@@ -1319,7 +1318,7 @@ function timeAgo(ts) {
 // nominally 2.0s; the true figure includes real processing overhead) rather
 // than something that looks like a defect.
 function detectionIntervalText(fps) {
-    if (!fps || fps <= 0) return '—';
+    if (!fps || fps <= 0) return '-';
     return `${(1 / fps).toFixed(1)}s`;
 }
 

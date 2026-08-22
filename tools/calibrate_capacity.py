@@ -4,7 +4,7 @@ Derive per-camera capacity from recorded snapshots.
 
 detection/severity.py expresses severity as PCU / capacity so that cameras with
 different fields of view are comparable. The capacity values shipped there are
-informed estimates from the stream geometry, not measurements — this script
+informed estimates from the stream geometry, not measurements - this script
 replaces them with numbers derived from what each camera actually observed.
 
 Method
@@ -39,7 +39,7 @@ from database import DB_AVAILABLE, AsyncSessionLocal as _AsyncSession  # noqa: E
 
 async def calibrate(days: int, percentile: float) -> None:
     if not DB_AVAILABLE or _AsyncSession is None:
-        sys.exit("No database connection — cannot calibrate without recorded snapshots.")
+        sys.exit("No database connection - cannot calibrate without recorded snapshots.")
 
     async with _AsyncSession() as db:
         rows = (await db.execute(text("""
@@ -69,7 +69,7 @@ async def calibrate(days: int, percentile: float) -> None:
     print("\nPaste into CAMERA_CAPACITY in detection/severity.py:\n")
     print("CAMERA_CAPACITY: dict[str, float] = {")
     for r in rows:
-        note = "   # THIN DATA — collect more before trusting" if r in thin else ""
+        note = "   # THIN DATA - collect more before trusting" if r in thin else ""
         print(f'    "{r["camera_id"]}": {r["p_pcu"]:.1f},{note}')
     print("}")
 

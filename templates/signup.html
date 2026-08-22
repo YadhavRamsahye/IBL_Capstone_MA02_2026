@@ -4,7 +4,7 @@ Project  : IBL Group - Traffic Bottleneck Detection System
 Unit     : ISAD3000 Capstone Computing Project 1
 Team     : IBL Group
 
-Author   : [Mokshan Mehess] (22703417) — Document Lead
+Author   : [Mokshan Mehess] (22703417) - Document Lead
 Role     : Document Lead
 =============================================================
 -->
@@ -16,6 +16,7 @@ Role     : Document Lead
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign Up - AI Traffic Bottleneck Detection</title>
+    <link rel="icon" type="image/jpeg" href="/static/ibl-logo.jpg">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -39,12 +40,13 @@ Role     : Document Lead
         .logo-area { text-align: center; margin-bottom: 32px; }
 
         .logo-icon {
-            width: 64px; height: 64px;
-            background: linear-gradient(135deg, #e94560, #0f3460);
+            width: 72px; height: 72px;
+            background: #ffffff; padding: 6px;
             border-radius: 16px;
             display: flex; align-items: center; justify-content: center;
-            margin: 0 auto 16px; font-size: 28px;
+            margin: 0 auto 16px; overflow: hidden;
         }
+        .logo-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
 
         .logo-area h1 { color: #ffffff; font-size: 20px; font-weight: 700; line-height: 1.3; }
         .logo-area p  { color: rgba(255, 255, 255, 0.5); font-size: 13px; margin-top: 6px; }
@@ -109,12 +111,7 @@ Role     : Document Lead
     <div class="signup-container">
         <div class="logo-area">
             <div class="logo-icon">
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                    <path d="M16 4C9.373 4 4 9.373 4 16s5.373 12 12 12 12-5.373 12-12S22.627 4 16 4z" fill="rgba(255,255,255,0.15)"/>
-                    <circle cx="16" cy="16" r="3" fill="white"/>
-                    <path d="M10 16h3M19 16h3M16 10v3M16 19v3" stroke="white" stroke-width="2" stroke-linecap="round"/>
-                    <path d="M12 12l2 2M18 18l2 2M20 12l-2 2M14 18l-2 2" stroke="rgba(255,255,255,0.6)" stroke-width="1.5" stroke-linecap="round"/>
-                </svg>
+                <img src="/static/ibl-logo.jpg" alt="IBL Group">
             </div>
             <h1>Create Account</h1>
             <p>AI Traffic Bottleneck Detection System</p>
@@ -130,6 +127,16 @@ Role     : Document Lead
                 <input type="text" id="username" name="username" placeholder="Choose a username" required autofocus minlength="3">
             </div>
             <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email"
+                           placeholder="you@example.com" required
+                           autocomplete="email">
+                    <div style="color:rgba(255,255,255,.35);font-size:12px;margin-top:6px;">
+                        Used only to recover your account if you forget your password.
+                    </div>
+                </div>
+
+                <div class="form-group">
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" placeholder="Choose a password" required minlength="6">
             </div>
@@ -141,7 +148,7 @@ Role     : Document Lead
         </form>
 
         <div class="login-link">Already have an account? <a href="/login">Sign in</a></div>
-        <div class="footer-text">IBL Capstone Project &mdash; MA02 2026</div>
+        <div class="footer-text">IBL Capstone Project - MA02 2026</div>
     </div>
 </body>
 </html>

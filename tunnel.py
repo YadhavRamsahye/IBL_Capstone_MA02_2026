@@ -1,5 +1,5 @@
 """
-tunnel.py — expose the local server to mobile via a public ngrok URL.
+tunnel.py - expose the local server to mobile via a public ngrok URL.
 Run this in a second terminal while main.py is running:
     python tunnel.py
 """
@@ -9,19 +9,19 @@ import time, sys
 PORT = 8000
 
 print("=" * 55)
-print("  Traffic App — Mobile Tunnel")
+print("  Traffic App - Mobile Tunnel")
 print("=" * 55)
 
 try:
     tunnel = ngrok.connect(PORT, "http")
     url = tunnel.public_url
-    # pyngrok returns http:// — also print the https variant
+    # pyngrok returns http:// - also print the https variant
     https_url = url.replace("http://", "https://")
 
     print(f"\n  Public URL (use this on your phone):")
     print(f"\n      {https_url}\n")
     print(f"  Also works: {url}")
-    print("\n  Share this link with anyone — works over mobile data too.")
+    print("\n  Share this link with anyone - works over mobile data too.")
     print("  Press Ctrl+C to stop the tunnel.\n")
     print("=" * 55)
 

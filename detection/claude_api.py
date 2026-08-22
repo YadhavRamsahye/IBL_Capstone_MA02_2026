@@ -14,9 +14,9 @@ This module provides the ``TrafficSummaryService`` class, which:
   - Caches the last successful summary per camera for resilience.
   - Uses exponential backoff on transient failures (SRS Section 5.2.8).
 
-Author : Yadhav Sharma Ramsahye (22108355) — Scrum Master
+Author : Yadhav Sharma Ramsahye (22108355) - Scrum Master
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System
+Team   : IBL Group - Traffic Bottleneck Detection System
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ _JITTER_FACTOR: float = 0.25      # +-25% randomness on delay
 # Circuit breaker: after this many consecutive failures the API is skipped
 # entirely for ``_BREAKER_COOLDOWN`` seconds.  Without this the service would
 # re-attempt (and re-sleep) on every detection cycle of every camera even when
-# the failure is permanent — e.g. an exhausted credit balance.
+# the failure is permanent - e.g. an exhausted credit balance.
 _BREAKER_THRESHOLD: int = 5
 _BREAKER_COOLDOWN: float = 300.0  # seconds before a single probe is allowed
 
@@ -183,7 +183,7 @@ _SEVERITY_LABELS: dict[str, str] = {
 # Pre-written route suggestions per well-known camera location.  If a camera
 # is not listed here the template uses a generic suggestion.
 # Cameras whose road a given detour actually routes traffic onto. Used to
-# suppress a suggestion when the alternative is itself congested — advising a
+# suppress a suggestion when the alternative is itself congested - advising a
 # driver onto a jammed road is worse than giving no advice, and the system has
 # the live data to know the difference.
 _ROUTE_COVERED_BY: dict[str, str] = {
@@ -194,7 +194,7 @@ _ROUTE_COVERED_BY: dict[str, str] = {
 }
 
 _ROUTE_SUGGESTIONS: dict[str, str] = {
-    # Keys must match the camera IDs produced by discover_cameras() — the
+    # Keys must match the camera IDs produced by discover_cameras() - the
     # earlier "caudan" entry never matched "caudan_north"/"caudan_south", so
     # those cameras silently fell through to the generic suggestion.
     "caudan_north":      "Try the A1 motorway northbound or the Quay D waterfront detour.",
@@ -227,7 +227,7 @@ def route_advice(camera_id: str, live_severity: dict[str, str] | None = None) ->
     if live_severity and alt_cam:
         alt_state = live_severity.get(alt_cam)
         if alt_state in ("heavy", "bottleneck"):
-            return ("Alternative routes are also congested — expect delays on "
+            return ("Alternative routes are also congested - expect delays on "
                     "any approach.")
     return suggestion
 
@@ -300,9 +300,9 @@ def _camera_display_name(camera_id: str) -> str:
 # Model interaction (async)
 # ---------------------------------------------------------------------------
 # The vendor-specific part lives in detection/providers.py and is selected by
-# the SUMMARY_PROVIDER environment variable. Everything in this module —
+# the SUMMARY_PROVIDER environment variable. Everything in this module -
 # retry/backoff, the circuit breaker, per-camera caching and the template
-# fallback — is vendor-independent and unchanged by a provider switch.
+# fallback - is vendor-independent and unchanged by a provider switch.
 
 # Ceiling on generated length. Billing (where it applies) is on tokens actually
 # produced, so the real length control is the two-sentence rule in the system
@@ -343,14 +343,14 @@ async def _call_model(data: DetectionData, prompt_type: str = "summary") -> str:
         Any API or network error is propagated to the caller for retry
         handling and circuit-breaker classification.
     """
-    # Supply the curated detour rather than asking the model to recall one —
+    # Supply the curated detour rather than asking the model to recall one -
     # road names are the only part of the summary the model could get wrong.
     detour = ""
     if data.severity in ("heavy", "bottleneck"):
         detour = "\nDetour: " + route_advice(data.camera_id, data.live_severity)
 
     # Per-direction detail when the camera is calibrated. A two-way road where
-    # one side is blocked and the other is clear needs both stated — a single
+    # one side is blocked and the other is clear needs both stated - a single
     # figure describes neither, which is the whole reason directions exist.
     per_direction = ""
     if data.directions and set(data.directions) != {"combined"}:
@@ -375,7 +375,7 @@ async def _call_model(data: DetectionData, prompt_type: str = "summary") -> str:
 
 
 # ---------------------------------------------------------------------------
-# TrafficSummaryService — the public interface
+# TrafficSummaryService - the public interface
 # ---------------------------------------------------------------------------
 
 class TrafficSummaryService:
@@ -429,7 +429,7 @@ class TrafficSummaryService:
         Returns
         -------
         TrafficSummary
-            Always returns a summary — either from the Claude API or from
+            Always returns a summary - either from the Claude API or from
             the template fallback.
         """
         data = DetectionData.from_dict(detection, live_severity)
@@ -475,7 +475,7 @@ class TrafficSummaryService:
           ``_BREAKER_COOLDOWN`` seconds, after which a single probe is allowed
           through.  One success closes the circuit.
         """
-        # No key, or explicitly disabled — go straight to the template without
+        # No key, or explicitly disabled - go straight to the template without
         # opening a client or burning a retry cycle.
         if not _api_usable():
             return self._fallback(data, prompt_type)
@@ -498,7 +498,7 @@ class TrafficSummaryService:
                     vehicle_count=data.vehicle_count,
                     timestamp=datetime.now(timezone.utc).isoformat(),
                     # Name the provider that actually answered, not a fixed
-                    # "claude_api" — the backend is configurable now.
+                    # "claude_api" - the backend is configurable now.
                     source=providers.active_provider(),
                 )
                 self._cache[data.camera_id] = summary
@@ -524,7 +524,7 @@ class TrafficSummaryService:
 
                 delay = _backoff_delay(attempt)
                 logger.warning(
-                    "[%s] %s API attempt %d/%d failed: %s — retrying in %.1fs",
+                    "[%s] %s API attempt %d/%d failed: %s - retrying in %.1fs",
                     data.camera_id,
                     providers.active_provider(),
                     attempt + 1,
@@ -535,7 +535,7 @@ class TrafficSummaryService:
                 if attempt < _MAX_RETRIES - 1:
                     await asyncio.sleep(delay)
 
-        # All retries exhausted — fall back to template.
+        # All retries exhausted - fall back to template.
         self._maybe_open_breaker()
         return self._fallback(data, prompt_type)
 
@@ -563,7 +563,7 @@ class TrafficSummaryService:
         if self._budget_used >= _DAILY_BUDGET:
             if not self._budget_logged:
                 logger.info(
-                    "Daily %s budget of %d call(s) is spent — template summaries "
+                    "Daily %s budget of %d call(s) is spent - template summaries "
                     "for the rest of today. Raise SUMMARY_DAILY_BUDGET if your "
                     "plan allows more.",
                     providers.active_provider(), _DAILY_BUDGET,
@@ -597,7 +597,7 @@ class TrafficSummaryService:
             return False
 
         if time.monotonic() >= self._breaker_open_until:
-            logger.info("%s API cooldown elapsed — probing with one request.",
+            logger.info("%s API cooldown elapsed - probing with one request.",
                         providers.active_provider())
             self._breaker_open_until = 0.0
             self._breaker_logged = False
@@ -613,7 +613,7 @@ class TrafficSummaryService:
         self._breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN
         if not self._breaker_logged:
             logger.warning(
-                "%s API circuit OPEN after %d consecutive failures — "
+                "%s API circuit OPEN after %d consecutive failures - "
                 "using template summaries for the next %.0fs.",
                 providers.active_provider(),
                 self._consecutive_failures,
@@ -624,7 +624,7 @@ class TrafficSummaryService:
     def _close_breaker(self) -> None:
         """Reset all failure state after a successful call."""
         if self._consecutive_failures >= _BREAKER_THRESHOLD:
-            logger.info("%s API recovered — circuit CLOSED.", providers.active_provider())
+            logger.info("%s API recovered - circuit CLOSED.", providers.active_provider())
         self._consecutive_failures = 0
         self._breaker_open_until = 0.0
         self._breaker_logged = False
@@ -647,7 +647,7 @@ class TrafficSummaryService:
         # Cache the fallback too so there is always *something* to display.
         self._cache[data.camera_id] = summary
         # While the circuit is open this runs on every detection cycle of every
-        # camera, so keep it at debug — the single "circuit OPEN" warning
+        # camera, so keep it at debug - the single "circuit OPEN" warning
         # already records the outage.
         logger.log(
             logging.DEBUG if self._breaker_open_until else logging.INFO,

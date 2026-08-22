@@ -77,7 +77,7 @@ def cmd_measure(args: argparse.Namespace) -> None:
     samples: list[dict] = []
 
     t0 = time.perf_counter()
-    print(f"Grabbing {args.frames} live frames from {args.camera!r} — "
+    print(f"Grabbing {args.frames} live frames from {args.camera!r} - "
           f"nominal FRAME_INTERVAL={FRAME_INTERVAL:.1f}s, real cadence may run "
           f"longer (grab+inference time included) …\n")
 
@@ -85,7 +85,7 @@ def cmd_measure(args: argparse.Namespace) -> None:
         f_start = time.perf_counter()
         frame = _grab_single_frame([url], width, height)
         if frame is None:
-            print(f"  [{i+1}/{args.frames}] frame grab failed — skipping")
+            print(f"  [{i+1}/{args.frames}] frame grab failed - skipping")
             continue
 
         results = model.predict(source=frame, conf=CONF_THRESHOLD,
@@ -132,7 +132,7 @@ def cmd_measure(args: argparse.Namespace) -> None:
           f"(nominal FRAME_INTERVAL={FRAME_INTERVAL:.1f}s)")
 
     if not samples:
-        print("\nNo track survived two consecutive frames — no vehicle was both "
+        print("\nNo track survived two consecutive frames - no vehicle was both "
               "visible and slow-moving/stationary enough to sample. Try a camera "
               "with a parked car in frame, or run with more --frames.")
         return
@@ -151,7 +151,7 @@ def cmd_measure(args: argparse.Namespace) -> None:
     print(f"  centroid disp/diag   min={min(norms):.3f}  median={pct(norms,0.5):.3f}  "
           f"p90={pct(norms,0.9):.3f}  max={max(norms):.3f}")
     print("\n(centroid disp/diag: displacement between frames as a fraction of the "
-          "box's own diagonal — independent of how near/far the vehicle is, unlike "
+          "box's own diagonal - independent of how near/far the vehicle is, unlike "
           "raw pixels or IoU which both shrink for a small distant box.)")
 
 
@@ -164,7 +164,7 @@ def cmd_inject(args: argparse.Namespace) -> None:
     resp = session.post(f"{args.base_url}/login",
                         data={"username": args.username, "password": args.password})
     if not session.cookies:
-        sys.exit(f"Login failed (status {resp.status_code}) — check --username/--password.")
+        sys.exit(f"Login failed (status {resp.status_code}) - check --username/--password.")
 
     print(f"Logged in as {args.username!r}. Replaying a synthetic "
           f"{args.vehicles}-vehicle stall on {args.camera!r} ({args.frames} frames) …")
@@ -185,7 +185,7 @@ def cmd_inject(args: argparse.Namespace) -> None:
         print("NOT confirmed within the replayed frames. Final verdict:")
         print(f"  {result['final_verdict']}")
 
-    # Re-check the live, DB-backed endpoint — proves this is really being
+    # Re-check the live, DB-backed endpoint - proves this is really being
     # served, not just written.
     resp = session.get(f"{args.base_url}/api/incidents/active")
     resp.raise_for_status()
