@@ -39,8 +39,12 @@ DB_NAME  = os.getenv("DB_NAME", "trafficsystem")
 MIN_PASSWORD_LEN = 8
 
 
-def prompt_credentials() -> tuple[str, str]:
+def prompt_credentials() -> tuple[str, str, str]:
     username = input("Admin username [admin]: ").strip() or "admin"
+    email = input("Admin email [admin@example.com]: ").strip() or "admin@example.com"
+    while "@" not in email or "." not in email.rpartition("@")[2]:
+        print("  Enter a valid email address.")
+        email = input("Admin email [admin@example.com]: ").strip() or "admin@example.com"
     while True:
         pw = getpass.getpass("Password: ")
         if len(pw) < MIN_PASSWORD_LEN:
@@ -49,7 +53,7 @@ def prompt_credentials() -> tuple[str, str]:
         if pw != getpass.getpass("Confirm password: "):
             print("  Passwords do not match.")
             continue
-        return username, pw
+        return username, email, pw
 
 
 async def seed() -> None:
@@ -59,7 +63,7 @@ async def seed() -> None:
             "    DB_PASSWORD=your-postgres-password"
         )
 
-    username, password = prompt_credentials()
+    username, email, password = prompt_credentials()
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
     conn = await asyncpg.connect(
@@ -83,9 +87,9 @@ async def seed() -> None:
             return
 
         await conn.execute(
-            "INSERT INTO users (id, username, password_hash, role) "
-            "VALUES ($1, $2, $3, $4)",
-            str(uuid.uuid4()), username, hashed, "admin",
+            "INSERT INTO users (id, username, email, password_hash, role) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            str(uuid.uuid4()), username, email, hashed, "admin",
         )
         print(f"Created admin user '{username}'.")
     finally:

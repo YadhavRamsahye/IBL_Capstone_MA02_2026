@@ -24,6 +24,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from email.message import EmailMessage
+import smtplib
 import uvicorn
 import os
 from dotenv import load_dotenv
@@ -41,8 +43,10 @@ from database import (
 from detection import direction
 from detection.severity import capacity_for
 from auth import (
-    authenticate, create_user, get_current_user, get_session_secret,
-    record_audit, require_admin, require_user, websocket_user,
+    authenticate, create_password_reset_token, create_user,
+    get_current_user, get_password_reset_user, get_session_secret,
+    record_audit, reset_password, require_admin, require_user,
+    websocket_user, _is_valid_email,
 )
 
 from detection.mock_pipeline import run_mock_pipeline
@@ -56,6 +60,38 @@ from detection.incident_detector import IncidentDetector
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_FROM = os.getenv("SMTP_FROM", "andrea.ramsamy2@gmail.com")
+PASSWORD_RESET_TOKEN_LIFETIME = int(os.getenv("PASSWORD_RESET_TOKEN_LIFETIME", "3600"))
+
+
+def _smtp_configured() -> bool:
+    return bool(SMTP_HOST and SMTP_FROM)
+
+
+def _send_password_reset_email(to_email: str, reset_link: str) -> None:
+    message = EmailMessage()
+    message["Subject"] = "Reset your AI Traffic Bottleneck password"
+    message["From"] = SMTP_FROM
+    message["To"] = to_email
+    message.set_content(
+        "Hello,\n\n"
+        "We received a request to reset the password for your AI Traffic Bottleneck account.\n\n"
+        f"Reset your password by clicking the link below:\n\n{reset_link}\n\n"
+        "If you did not request a password reset, you can safely ignore this email.\n\n"
+        "This link will expire in one hour.\n\n"
+        "IBL Capstone Project — AI Traffic Bottleneck Detection System"
+    )
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+        server.starttls()
+        if SMTP_USER and SMTP_PASSWORD:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(message)
 
 
 # Keyed by camera_id; updated in-place by background tasks.
@@ -751,28 +787,129 @@ async def signup_page(request: Request):
 async def signup_submit(
     request: Request,
     username: str = Form(...),
+    email: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
 ):
     if len(username) < 3:
         return templates.TemplateResponse(
             "signup.html",
-            {"request": request, "error": "Username must be at least 3 characters."},
+            {"request": request, "error": "Username must be at least 3 characters.",
+             "username": username, "email": email},
             status_code=400,
         )
     if password != confirm_password:
         return templates.TemplateResponse(
             "signup.html",
-            {"request": request, "error": "Passwords do not match."},
+            {"request": request, "error": "Passwords do not match.",
+             "username": username, "email": email},
             status_code=400,
         )
 
-    ok, message = await create_user(username, password)
+    ok, message = await create_user(username, email, password)
     await record_audit(request, "signup", username, ok)
     if not ok:
         # Previously this path always reported success while writing nothing.
         return templates.TemplateResponse(
-            "signup.html", {"request": request, "error": message}, status_code=400,
+            "signup.html",
+            {"request": request, "error": message, "username": username, "email": email},
+            status_code=400,
+        )
+    return RedirectResponse(
+        url=f"/login?success={quote_plus(message)}", status_code=302,
+    )
+
+
+@app.get("/recover-password", response_class=HTMLResponse)
+async def recover_password_page(request: Request, error: str = None, success: str = None):
+    user = get_current_user(request)
+    if user:
+        return RedirectResponse(url="/map", status_code=302)
+    return templates.TemplateResponse(
+        "recoverypassword.html",
+        {"request": request, "error": error, "success": success},
+    )
+
+
+@app.post("/recover-password", response_class=HTMLResponse)
+async def recover_password_submit(request: Request, email: str = Form(...)):
+    if not _is_valid_email(email.strip().lower()):
+        return templates.TemplateResponse(
+            "recoverypassword.html",
+            {"request": request, "error": "Enter a valid email address."},
+            status_code=400,
+        )
+
+    token = await create_password_reset_token(email)
+    if not token:
+        return templates.TemplateResponse(
+            "recoverypassword.html",
+            {"request": request, "error": "No account was found with that email. Please enter a valid email address."},
+            status_code=400,
+        )
+
+    if not _smtp_configured():
+        return templates.TemplateResponse(
+            "recoverypassword.html",
+            {"request": request, "error": "Email service is not configured. Contact the administrator."},
+            status_code=500,
+        )
+
+    try:
+        reset_link = str(request.url_for("reset_password_page")) + f"?token={quote_plus(token)}"
+        _send_password_reset_email(email.strip().lower(), reset_link)
+    except Exception as exc:
+        logger.error("Password reset email send failed: %s", exc, exc_info=True)
+        return templates.TemplateResponse(
+            "recoverypassword.html",
+            {"request": request, "error": "Unable to send reset email at this time."},
+            status_code=500,
+        )
+
+    return templates.TemplateResponse(
+        "recoverypassword.html",
+        {"request": request, "success": "Account found. A reset link has been sent to your email!"},
+    )
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page(request: Request, token: str = None, error: str = None):
+    user = get_current_user(request)
+    if user:
+        return RedirectResponse(url="/map", status_code=302)
+    if token:
+        valid_user = await get_password_reset_user(token)
+        if not valid_user:
+            return templates.TemplateResponse(
+                "resetpassword.html",
+                {"request": request, "error": "Invalid or expired password reset link.", "token": ""},
+                status_code=400,
+            )
+    return templates.TemplateResponse(
+        "resetpassword.html",
+        {"request": request, "error": error, "success": None, "token": token or ""},
+    )
+
+
+@app.post("/reset-password", response_class=HTMLResponse)
+async def reset_password_submit(
+    request: Request,
+    token: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    if password != confirm_password:
+        return templates.TemplateResponse(
+            "resetpassword.html",
+            {"request": request, "error": "Passwords do not match.", "token": token},
+            status_code=400,
+        )
+    ok, message = await reset_password(token, password)
+    if not ok:
+        return templates.TemplateResponse(
+            "resetpassword.html",
+            {"request": request, "error": message, "token": token},
+            status_code=400,
         )
     return RedirectResponse(
         url=f"/login?success={quote_plus(message)}", status_code=302,
@@ -790,7 +927,7 @@ async def login_submit(request: Request, username: str = Form(...), password: st
         "login.html",
         # Deliberately does not distinguish unknown user from wrong password —
         # that difference tells an attacker which usernames exist.
-        {"request": request, "error": "Invalid username or password."},
+        {"request": request, "error": "Invalid username/email or password.", "username": username},
         status_code=401,
     )
 

@@ -35,10 +35,19 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS users (
     id            UUID PRIMARY KEY,
     username      VARCHAR(50) UNIQUE NOT NULL,
+    email         VARCHAR(255) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,          -- bcrypt; never store plaintext
     role          user_role NOT NULL DEFAULT 'user',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_login    TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    token       TEXT PRIMARY KEY,
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used        BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ── Cameras ──────────────────────────────────────────────────────────────────

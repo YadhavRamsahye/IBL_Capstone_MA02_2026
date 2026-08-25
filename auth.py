@@ -32,6 +32,7 @@ import logging
 import os
 import secrets
 import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import bcrypt
@@ -55,6 +56,7 @@ _DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "admin123")
 
 MIN_USERNAME_LEN = 3
 MIN_PASSWORD_LEN = 8
+EMAIL_MAX_LEN = 255
 
 
 def get_session_secret() -> str:
@@ -92,6 +94,105 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
+def _is_valid_email(value: str) -> bool:
+    if not value or "@" not in value:
+        return False
+    local, _, domain = value.rpartition("@")
+    return bool(local and domain and "." in domain and len(value) <= EMAIL_MAX_LEN)
+
+
+async def create_password_reset_token(email: str, expires_in: int = 3600) -> Optional[str]:
+    if not DB_AVAILABLE or _AsyncSession is None:
+        return None
+    email = email.strip().lower()
+    if not _is_valid_email(email):
+        return None
+    try:
+        async with _AsyncSession() as db:
+            row = (await db.execute(
+                text("SELECT id FROM users WHERE email = :e"),
+                {"e": email},
+            )).mappings().first()
+            if not row:
+                return None
+            token = secrets.token_urlsafe(32)
+            await db.execute(
+                text("INSERT INTO password_reset_tokens "
+                     "(token, user_id, expires_at, used) "
+                     "VALUES (:token, :user_id, :expires_at, false)"),
+                {
+                    "token": token,
+                    "user_id": str(row["id"]),
+                    "expires_at": datetime.now(timezone.utc)
+                                   + timedelta(seconds=expires_in),
+                },
+            )
+            await db.commit()
+            return token
+    except Exception as exc:
+        logger.error("Password reset token creation failed: %s", exc, exc_info=True)
+        return None
+
+
+async def get_password_reset_user(token: str) -> Optional[dict]:
+    if not DB_AVAILABLE or _AsyncSession is None:
+        return None
+    if not token:
+        return None
+    try:
+        async with _AsyncSession() as db:
+            row = (await db.execute(
+                text("SELECT users.id AS user_id, users.username, users.email "
+                     "FROM password_reset_tokens "
+                     "JOIN users ON users.id = password_reset_tokens.user_id "
+                     "WHERE password_reset_tokens.token = :token "
+                     "AND password_reset_tokens.used = false "
+                     "AND password_reset_tokens.expires_at > NOW()"),
+                {"token": token},
+            )).mappings().first()
+            if row:
+                return {
+                    "id": str(row["user_id"]),
+                    "username": row["username"],
+                    "email": row["email"],
+                }
+    except Exception as exc:
+        logger.error("Password reset token validation failed: %s", exc, exc_info=True)
+    return None
+
+
+async def reset_password(token: str, password: str) -> tuple[bool, str]:
+    if len(password) < MIN_PASSWORD_LEN:
+        return False, f"Password must be at least {MIN_PASSWORD_LEN} characters."
+    if not DB_AVAILABLE or _AsyncSession is None:
+        return False, ("Password reset is unavailable — the database is not "
+                       "connected. Contact an administrator.")
+    try:
+        async with _AsyncSession() as db:
+            row = (await db.execute(
+                text("SELECT user_id FROM password_reset_tokens "
+                     "WHERE token = :token "
+                     "AND used = false "
+                     "AND expires_at > NOW()"),
+                {"token": token},
+            )).mappings().first()
+            if not row:
+                return False, "Invalid or expired password reset token."
+            await db.execute(
+                text("UPDATE users SET password_hash = :h WHERE id = :user_id"),
+                {"h": hash_password(password), "user_id": str(row["user_id"])},
+            )
+            await db.execute(
+                text("UPDATE password_reset_tokens SET used = true WHERE token = :token"),
+                {"token": token},
+            )
+            await db.commit()
+            return True, "Password reset successfully. Please sign in."
+    except Exception as exc:
+        logger.error("Password reset failed: %s", exc, exc_info=True)
+        return False, "Could not reset the password. Please try again."
+
+
 # ── User store ────────────────────────────────────────────────────────────────
 
 async def authenticate(username: str, password: str) -> Optional[dict]:
@@ -99,13 +200,23 @@ async def authenticate(username: str, password: str) -> Optional[dict]:
     if DB_AVAILABLE and _AsyncSession is not None:
         try:
             async with _AsyncSession() as db:
-                row = (await db.execute(
-                    text("SELECT id, username, password_hash, role FROM users "
-                         "WHERE username = :u"),
-                    {"u": username},
-                )).mappings().first()
+                login_value = username.strip()
+                if _is_valid_email(login_value):
+                    login_value = login_value.lower()
+                    row = (await db.execute(
+                        text("SELECT id, username, password_hash, role FROM users "
+                             "WHERE email = :u"),
+                        {"u": login_value},
+                    )).mappings().first()
+                else:
+                    row = (await db.execute(
+                        text("SELECT id, username, password_hash, role FROM users "
+                             "WHERE username = :u"),
+                        {"u": login_value},
+                    )).mappings().first()
+
             if row and verify_password(password, row["password_hash"]):
-                await _touch_last_login(username)
+                await _touch_last_login(row["username"])
                 return {"username": row["username"], "role": row["role"],
                         "id": str(row["id"])}
             return None
@@ -125,10 +236,14 @@ async def authenticate(username: str, password: str) -> Optional[dict]:
     return None
 
 
-async def create_user(username: str, password: str, role: str = "user") -> tuple[bool, str]:
+async def create_user(username: str, email: str, password: str, role: str = "user") -> tuple[bool, str]:
     """Create an account. Returns (ok, message)."""
+    username = username.strip()
+    email = email.strip().lower()
     if len(username) < MIN_USERNAME_LEN:
         return False, f"Username must be at least {MIN_USERNAME_LEN} characters."
+    if not _is_valid_email(email):
+        return False, "Enter a valid email address."
     if len(password) < MIN_PASSWORD_LEN:
         return False, f"Password must be at least {MIN_PASSWORD_LEN} characters."
     if not DB_AVAILABLE or _AsyncSession is None:
@@ -138,15 +253,16 @@ async def create_user(username: str, password: str, role: str = "user") -> tuple
     try:
         async with _AsyncSession() as db:
             existing = (await db.execute(
-                text("SELECT 1 FROM users WHERE username = :u"), {"u": username}
+                text("SELECT 1 FROM users WHERE username = :u OR email = :e"),
+                {"u": username, "e": email}
             )).first()
             if existing:
-                return False, "That username is already taken."
+                return False, "That username or email is already taken."
             await db.execute(
-                text("INSERT INTO users (id, username, password_hash, role) "
-                     "VALUES (:id, :u, :h, :r)"),
+                text("INSERT INTO users (id, username, email, password_hash, role) "
+                     "VALUES (:id, :u, :e, :h, :r)"),
                 {"id": str(uuid.uuid4()), "u": username,
-                 "h": hash_password(password), "r": role},
+                 "e": email, "h": hash_password(password), "r": role},
             )
             await db.commit()
         return True, "Account created successfully. Please sign in."
