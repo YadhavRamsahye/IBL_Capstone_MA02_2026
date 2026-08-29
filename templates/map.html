@@ -824,6 +824,18 @@ function routePanelHtml(id, lat, lng) {
         </div>`;
 }
 
+// Labels of any direction the per-direction StationaryTracker verdict has
+// confirmed stalled (see hls_pipeline._detect_loop). Checked separately from
+// the whole-frame possible_incident flag because a single blocked lane next
+// to a flowing one dilutes the whole-frame stopped-fraction below its
+// threshold and never sets that flag at all.
+function blockedDirections(det) {
+    const dirs = det.directions || {};
+    return Object.entries(dirs)
+        .filter(([l, d]) => l !== 'combined' && d.is_incident === true)
+        .map(([l]) => l);
+}
+
 // Per-direction rows. A two-way road where one side is blocked and the other
 // is clear cannot be described by a single severity, so both are shown; an
 // uncalibrated camera reports only "combined" and this renders nothing.
@@ -834,8 +846,12 @@ function directionRowsHtml(det) {
     const rows = labels.sort().map(l => {
         const d = dirs[l];
         const name = l.charAt(0).toUpperCase() + l.slice(1);
-        return `<tr><td style="padding-right:8px;">${escAttr(name)}</td>
-                    <td style="color:${d.color};font-weight:600;">${escAttr(d.severity)}</td>
+        const blocked = d.is_incident === true;
+        const label = blocked ? 'BLOCKED' : d.severity;
+        const color = blocked ? '#e94560' : d.color;
+        const title = blocked && d.reason ? ` title="${escAttr(d.reason)}"` : '';
+        return `<tr${title}><td style="padding-right:8px;">${escAttr(name)}</td>
+                    <td style="color:${color};font-weight:600;">${escAttr(label)}</td>
                     <td style="text-align:right;">${d.vehicle_count}</td></tr>`;
     }).join('');
     return `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;">
@@ -846,11 +862,18 @@ function directionRowsHtml(det) {
 
 // Single source of truth for the badge — it is rendered from two places.
 function incidentBadgeHtml(det) {
-    if (det.possible_incident !== true) return '';
-    const d = det.incident_detail || {};
-    const why = d.reason ? ` title="${escAttr(d.reason)}"` : '';
-    const conf = d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : '';
-    return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
+    if (det.possible_incident === true) {
+        const d = det.incident_detail || {};
+        const why = d.reason ? ` title="${escAttr(d.reason)}"` : '';
+        const conf = d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : '';
+        return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
+    }
+    const blocked = blockedDirections(det);
+    if (blocked.length) {
+        const names = blocked.map(l => l.charAt(0).toUpperCase() + l.slice(1)).join(', ');
+        return `<div style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;">⚠ ${escAttr(names)} blocked</div>`;
+    }
+    return '';
 }
 
 // ── Live camera streaming (MJPEG) ─────────────────────────────────────────────
@@ -1129,7 +1152,10 @@ function applyTrafficData(data) {
         if (cameraMarkers[id]) {
             const marker      = cameraMarkers[id];
             const isHeavy     = ['heavy', 'bottleneck'].includes(det.severity);
-            const hasIncident = det.possible_incident === true;
+            // A per-direction stall (see blockedDirections) must trigger the
+            // same incident icon as the whole-frame flag — it's exactly the
+            // case the whole-frame check alone would miss.
+            const hasIncident = det.possible_incident === true || blockedDirections(det).length > 0;
             marker.setIcon(hasIncident ? camIncidentIcon(color) : camIcon(color));
             const lat = loc?.coords[0] ?? 0, lng = loc?.coords[1] ?? 0;
 
@@ -1155,7 +1181,7 @@ function applyTrafficData(data) {
 
         const li = document.createElement('li');
         li.onclick = () => loc && flyTo(loc.coords[0], loc.coords[1], 16);
-        const incidentTag = det.possible_incident === true
+        const incidentTag = (det.possible_incident === true || blockedDirections(det).length > 0)
             ? `<span style="margin-left:4px;padding:1px 5px;background:#f59e0b22;border:1px solid #f59e0b55;border-radius:8px;color:#f59e0b;font-size:9px;font-weight:700;">⚠ INCIDENT</span>`
             : '';
         li.innerHTML = `
