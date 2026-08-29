@@ -35,9 +35,17 @@ Calibrating capacity
 --------------------
 `capacity` is "how many PCU are visible in this camera's frame when its road is
 at practical capacity" — not a road-design figure. Estimate it from footage:
-take the 95th-percentile PCU load observed over a busy period. The values in
-CAMERA_CAPACITY are informed estimates from the Port Louis stream geometry, not
-measurements; see tools/calibrate_capacity.py to derive real ones.
+take the 95th-percentile PCU load observed over a busy period.
+
+The values in CAMERA_CAPACITY were originally informed estimates from the Port
+Louis stream geometry. They were replaced on 2026-08-21 with values measured by
+tools/calibrate_capacity.py --days 60 against 21,000+ recorded snapshots per
+camera — the estimates turned out to be off by as much as +38% (caudan_south)
+and -41% (la_chaussee), which meant la_chaussee's real congestion was being
+under-reported (saturation divided by a capacity ~41% too high) and
+caudan_south's was being over-reported in the opposite direction. Re-run the
+tool periodically as more data accumulates, especially for any camera added
+after this date — it still only has an informed estimate until measured.
 """
 
 from __future__ import annotations
@@ -57,13 +65,15 @@ PCU_WEIGHTS: dict[int, float] = {
 VEHICLE_CLASSES: frozenset[int] = frozenset(PCU_WEIGHTS)
 
 # ── Per-camera capacity, in PCU visible at practical capacity ─────────────────
-# Tune per camera; see the module docstring. DEFAULT_CAPACITY is used for any
-# camera not listed, and is deliberately mid-range rather than optimistic.
+# Measured via tools/calibrate_capacity.py --days 60 (2026-08-21), 95th-
+# percentile PCU load over 21,000+ recorded snapshots per camera.
+# DEFAULT_CAPACITY is used for any camera not listed, and is deliberately
+# mid-range rather than optimistic.
 CAMERA_CAPACITY: dict[str, float] = {
-    "caudan_north": 26.0,   # wide dual-carriageway view, long sight line
-    "caudan_south": 26.0,
-    "la_chaussee":  14.0,   # narrow city street, short sight line
-    "casernes":     18.0,   # single carriageway, medium view
+    "caudan_north": 29.5,   # wide dual-carriageway view, long sight line
+    "caudan_south": 36.0,
+    "la_chaussee":  8.2,    # narrow city street, short sight line
+    "casernes":     19.4,   # single carriageway, medium view
 }
 DEFAULT_CAPACITY: float = 20.0
 
