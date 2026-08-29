@@ -1,7 +1,7 @@
 """
 detection/camera_catalogue.py
 
-GENERATED FILE — do not edit by hand.
+GENERATED FILE - do not edit by hand.
 Regenerate with:  python tools/fetch_cameras.py
 
 Source : https://www.myt.mu/sinformer/trafficwatch/

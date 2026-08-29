@@ -1,7 +1,7 @@
 """
-Author : Sahil Singh Rughoo (22414560) — Tech Lead / Yadhav Sharma Ramsahye (22108355) — Developer
+Author : Sahil Singh Rughoo (22414560) - Tech Lead / Yadhav Sharma Ramsahye (22108355) - Developer
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
@@ -40,9 +40,12 @@ from database import (
 )
 from detection import direction
 from detection.severity import capacity_for
+import mailer
 from auth import (
     authenticate, create_user, get_current_user, get_session_secret,
     record_audit, require_admin, require_user, websocket_user,
+    create_password_reset, verify_reset_token, consume_reset_token,
+    RESET_TOKEN_TTL_MINUTES,
 )
 
 from detection.mock_pipeline import run_mock_pipeline
@@ -80,7 +83,7 @@ def _get_frame_event(camera_id: str) -> asyncio.Event:
 # Populated by lifespan() after discovery; read by /api/cameras.
 _active_cameras: list[dict] = []
 
-# Shared incident detector — analyses rolling count history per camera.
+# Shared incident detector - analyses rolling count history per camera.
 incident_detector = IncidentDetector()
 
 # Interval (seconds) between successive reads from the mock generator.
@@ -99,7 +102,7 @@ _SEVERITY_DEBOUNCE = 4
 
 # Absolute floor between API calls for one camera.  A confirmed severity
 # change shortens the wait from _SUMMARY_COOLDOWN to this, but never skips it
-# entirely — a camera parked on a threshold can confirm a transition
+# entirely - a camera parked on a threshold can confirm a transition
 # repeatedly, and without this floor those transitions alone kept the call
 # rate high.
 _MIN_SUMMARY_INTERVAL = 60.0
@@ -134,8 +137,8 @@ connected_clients: set = set()
 def _as_datetime(value) -> datetime:
     """Coerce an ISO-8601 string to a timezone-aware datetime for asyncpg.
 
-    asyncpg binds TIMESTAMPTZ parameters strictly — it rejects strings rather
-    than parsing them — so anything crossing into a timestamp column has to be
+    asyncpg binds TIMESTAMPTZ parameters strictly - it rejects strings rather
+    than parsing them - so anything crossing into a timestamp column has to be
     converted here.
     """
     if isinstance(value, datetime):
@@ -144,7 +147,7 @@ def _as_datetime(value) -> datetime:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
-        logger.warning("Unparseable timestamp %r — using current time.", value)
+        logger.warning("Unparseable timestamp %r - using current time.", value)
         return datetime.now(timezone.utc)
 
 
@@ -233,8 +236,8 @@ async def _save_snapshot(camera_id: str, result: dict) -> None:
             await db.commit()
     except SQLAlchemyError as exc:
         # Narrow to database errors and log the traceback. A bare `except
-        # Exception` here previously reduced a schema mismatch — which made
-        # every write fail — to a single warning line that was easy to miss.
+        # Exception` here previously reduced a schema mismatch - which made
+        # every write fail - to a single warning line that was easy to miss.
         logger.warning(
             "[db] Snapshot save failed for %s: %s", camera_id, exc, exc_info=True
         )
@@ -407,7 +410,7 @@ async def _process_detection(camera_id: str, result: dict) -> None:
     if elapsed < _MIN_SUMMARY_INTERVAL:
         return  # too soon under any circumstances
     if not severity_changed and elapsed < _SUMMARY_COOLDOWN:
-        return  # steady state — wait for the full cooldown
+        return  # steady state - wait for the full cooldown
 
     # ── Skip the API when the summary would say the same thing ────────────
     # The generated text only varies with severity and (coarsely) vehicle
@@ -500,7 +503,7 @@ async def _hls_camera_loop(
 
     Inner retry:  run_hls_pipeline retries MAX_RETRIES (3) times with 10 s delay.
     Outer retry:  on generator exhaustion this loop waits _HLS_RETRY_SECS (60 s)
-                  and starts a fresh generator — up to _MAX_HLS_ATTEMPTS (5) times.
+                  and starts a fresh generator - up to _MAX_HLS_ATTEMPTS (5) times.
     After 5 outer failures the camera falls back to mock with an explicit warning,
     then retries HLS every _HLS_RETRY_SECS seconds indefinitely.
 
@@ -516,7 +519,7 @@ async def _hls_camera_loop(
     hls_urls = url_candidates or [source]
     if startup_delay > 0:
         logger.info(
-            "[%s] HLS task staggered — waiting %.0fs before first attempt …",
+            "[%s] HLS task staggered - waiting %.0fs before first attempt …",
             camera_id, startup_delay,
         )
         await asyncio.sleep(startup_delay)
@@ -542,7 +545,7 @@ async def _hls_camera_loop(
                     latest_detections[camera_id] = result
                     _get_frame_event(camera_id).set()
                     if not got_live_frame:
-                        logger.info("[%s] HLS stream live — real data flowing.", camera_id)
+                        logger.info("[%s] HLS stream live - real data flowing.", camera_id)
                         outer_attempt = 0   # reset on first successful frame
                     got_live_frame = True
                     logger.debug("[%s] count=%d severity=%s",
@@ -559,7 +562,7 @@ async def _hls_camera_loop(
                            datetime.fromisoformat(last_ts)).total_seconds()
                     if age > _WATCHDOG_STALE_SECS:
                         logger.warning(
-                            "[%s] Watchdog: no frame in %.0fs — restarting stream.",
+                            "[%s] Watchdog: no frame in %.0fs - restarting stream.",
                             camera_id, age,
                         )
                         break
@@ -567,13 +570,13 @@ async def _hls_camera_loop(
 
             if outer_attempt < _MAX_HLS_ATTEMPTS:
                 logger.warning(
-                    "[%s] HLS attempt %d/%d failed — retrying in %ds …",
+                    "[%s] HLS attempt %d/%d failed - retrying in %ds …",
                     camera_id, outer_attempt, _MAX_HLS_ATTEMPTS, _HLS_RETRY_SECS,
                 )
                 await asyncio.sleep(_HLS_RETRY_SECS)
             else:
                 logger.warning(
-                    "WARNING: Camera %s using MOCK DATA — stream unavailable after %d attempts",
+                    "WARNING: Camera %s using MOCK DATA - stream unavailable after %d attempts",
                     camera_id, _MAX_HLS_ATTEMPTS,
                 )
                 # Run mock temporarily while we keep trying HLS in background cadence
@@ -610,14 +613,14 @@ async def _real_camera_loop(camera_id: str, source: str) -> None:
             try:
                 result = await asyncio.to_thread(_safe_next, gen)
                 if result is _GEN_DONE:
-                    logger.warning("[%s] Real stream ended — falling back to mock.", camera_id)
+                    logger.warning("[%s] Real stream ended - falling back to mock.", camera_id)
                     break
                 latest_detections[camera_id] = result
                 logger.debug("[%s] count=%d severity=%s",
                              camera_id, result["vehicle_count"], result["severity"])
                 await _process_detection(camera_id, result)
             except Exception as exc:
-                logger.error("[%s] Real stream error: %s — falling back to mock.",
+                logger.error("[%s] Real stream error: %s - falling back to mock.",
                              camera_id, exc, exc_info=True)
                 break
             await asyncio.sleep(0)          # yield the event loop between frames
@@ -636,35 +639,35 @@ async def lifespan(app: FastAPI):
     global _active_cameras
 
     # database.py's own "[db] Engine ready" log fires at import time, before
-    # main.py's logging is configured — with no handler attached yet, Python's
+    # main.py's logging is configured - with no handler attached yet, Python's
     # last-resort handler (WARNING+ only) drops that INFO-level line silently.
     # Re-state the outcome here, now that logging is live, loud on both paths.
     if DB_AVAILABLE:
         logger.info("[db] Engine ready → %s:%d/%s", _DB_HOST, _DB_PORT, _DB_NAME)
     else:
         logger.warning(
-            "[db] Not connected — starting without persistence "
+            "[db] Not connected - starting without persistence "
             "(see the [db] warning above for why; check DB_HOST/DB_PORT/DB_USER/"
             "DB_PASSWORD/DB_NAME in .env)."
         )
 
-    # Discovery runs in a thread — it is synchronous / blocking
+    # Discovery runs in a thread - it is synchronous / blocking
     logger.info("Running Traffic Watch camera discovery …")
     cameras: list[dict] = await asyncio.to_thread(discover_cameras)
 
-    # Log discovery outcome; keep HLS cameras even if ffprobe couldn't validate them —
+    # Log discovery outcome; keep HLS cameras even if ffprobe couldn't validate them -
     # _hls_camera_loop will retry persistently rather than silently falling to mock.
     if not cameras:
-        logger.error("[lifespan] Discovery returned empty list — using mock fallback.")
+        logger.error("[lifespan] Discovery returned empty list - using mock fallback.")
         cameras = [
             {"camera_id": "caudan_north", "source": "mock", "lat": -20.1626, "lng": 57.4939,
-             "name": "Caudan North — Port Louis",              "origin": "fallback", "validated": False},
+             "name": "Caudan North - Port Louis",              "origin": "fallback", "validated": False},
             {"camera_id": "caudan_south", "source": "mock", "lat": -20.1640, "lng": 57.4945,
-             "name": "Caudan South — Port Louis",              "origin": "fallback", "validated": False},
+             "name": "Caudan South - Port Louis",              "origin": "fallback", "validated": False},
             {"camera_id": "la_chaussee",  "source": "mock", "lat": -20.1608, "lng": 57.4972,
-             "name": "La Chaussee Street — Port Louis",        "origin": "fallback", "validated": False},
+             "name": "La Chaussee Street - Port Louis",        "origin": "fallback", "validated": False},
             {"camera_id": "casernes",     "source": "mock", "lat": -20.1590, "lng": 57.4960,
-             "name": "Casernes / Brabant Street — Port Louis", "origin": "fallback", "validated": False},
+             "name": "Casernes / Brabant Street - Port Louis", "origin": "fallback", "validated": False},
         ]
     else:
         n_hls  = sum(1 for c in cameras if c["source"].endswith(".m3u8"))
@@ -676,7 +679,7 @@ async def lifespan(app: FastAPI):
         )
         if n_hls > 0 and n_val == 0:
             logger.warning(
-                "[lifespan] No HLS streams validated — will attempt anyway and retry "
+                "[lifespan] No HLS streams validated - will attempt anyway and retry "
                 "every %ds (up to %d times) before using mock data.",
                 _HLS_RETRY_SECS, _MAX_HLS_ATTEMPTS,
             )
@@ -785,6 +788,7 @@ async def signup_page(request: Request):
 async def signup_submit(
     request: Request,
     username: str = Form(...),
+    email: str = Form(""),
     password: str = Form(...),
     confirm_password: str = Form(...),
 ):
@@ -801,7 +805,16 @@ async def signup_submit(
             status_code=400,
         )
 
-    ok, message = await create_user(username, password)
+    # An account with no address cannot use email recovery, so the address is
+    # validated here rather than discovered to be unusable at reset time.
+    if email and not mailer.is_valid_email(email):
+        return templates.TemplateResponse(
+            "signup.html",
+            {"request": request, "error": "That email address does not look valid."},
+            status_code=400,
+        )
+
+    ok, message = await create_user(username, password, email=email or None)
     await record_audit(request, "signup", username, ok)
     if not ok:
         # Previously this path always reported success while writing nothing.
@@ -822,7 +835,7 @@ async def login_submit(request: Request, username: str = Form(...), password: st
         return RedirectResponse(url="/map", status_code=302)
     return templates.TemplateResponse(
         "login.html",
-        # Deliberately does not distinguish unknown user from wrong password —
+        # Deliberately does not distinguish unknown user from wrong password -
         # that difference tells an attacker which usernames exist.
         {"request": request, "error": "Invalid username or password."},
         status_code=401,
@@ -846,9 +859,111 @@ async def logout(request: Request):
     return RedirectResponse(url="/login", status_code=302)
 
 
+# -- Password recovery ---------------------------------------------------------
+# The response to a reset request is identical whether or not the account
+# exists. Anything else turns this form into an account-enumeration oracle,
+# which is the classic mistake in a "forgot password" flow.
+
+_RESET_SENT_MESSAGE = (
+    "If an account matches that username or email, a reset link is on its way. "
+    "The link expires in {minutes} minutes."
+)
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request, sent: str = None, error: str = None):
+    if get_current_user(request):
+        return RedirectResponse(url="/map", status_code=302)
+    return templates.TemplateResponse(
+        "forgot_password.html",
+        {"request": request, "sent": sent, "error": error,
+         "smtp_ready": mailer.smtp_configured()},
+    )
+
+
+@app.post("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_submit(request: Request, identifier: str = Form(...)):
+    client_ip = request.client.host if request.client else None
+    user, token = await create_password_reset(identifier, client_ip)
+
+    # Logged either way so the audit trail records the attempt, but the caller
+    # is told the same thing regardless.
+    await record_audit(request, "password_reset_requested",
+                       identifier.strip()[:50], user is not None)
+
+    if user and token:
+        link = f"{mailer.public_base_url()}/reset-password?token={quote_plus(token)}"
+        # Delivery runs in the background so a slow or unreachable SMTP server
+        # cannot make this response measurably slower than the not-found case.
+        asyncio.create_task(asyncio.to_thread(
+            mailer.send_password_reset,
+            user["email"], user["username"], link, RESET_TOKEN_TTL_MINUTES,
+        ))
+
+    return templates.TemplateResponse(
+        "forgot_password.html",
+        {"request": request,
+         "sent": _RESET_SENT_MESSAGE.format(minutes=RESET_TOKEN_TTL_MINUTES),
+         "error": None,
+         "smtp_ready": mailer.smtp_configured()},
+    )
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page(request: Request, token: str = ""):
+    record = await verify_reset_token(token)
+    if not record:
+        return templates.TemplateResponse(
+            "reset_password.html",
+            {"request": request, "token": "", "username": None,
+             "error": "That reset link is invalid or has expired. "
+                      "Request a new one below."},
+            status_code=400,
+        )
+    return templates.TemplateResponse(
+        "reset_password.html",
+        {"request": request, "token": token,
+         "username": record["username"], "error": None},
+    )
+
+
+@app.post("/reset-password", response_class=HTMLResponse)
+async def reset_password_submit(
+    request: Request,
+    token: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    record = await verify_reset_token(token)
+    username = record["username"] if record else None
+
+    if password != confirm_password:
+        return templates.TemplateResponse(
+            "reset_password.html",
+            {"request": request, "token": token, "username": username,
+             "error": "Passwords do not match."},
+            status_code=400,
+        )
+
+    ok, message = await consume_reset_token(token, password)
+    await record_audit(request, "password_reset_completed", username or "unknown", ok)
+
+    if not ok:
+        return templates.TemplateResponse(
+            "reset_password.html",
+            {"request": request, "token": token if record else "",
+             "username": username, "error": message},
+            status_code=400,
+        )
+
+    return RedirectResponse(url=f"/login?success={quote_plus(message)}",
+                            status_code=302)
+
+
+
 
 # In-memory alert ring buffer; newest entries appended at the end.
-# Bounded because this was an unbounded list that grew for the process lifetime —
+# Bounded because this was an unbounded list that grew for the process lifetime -
 # a slow leak on any long-running deployment.
 ALERT_LOG_MAX = 500
 alert_log: deque[dict] = deque(maxlen=ALERT_LOG_MAX)
@@ -896,7 +1011,7 @@ async def api_summary(camera_id: str):
             "source":        cached.source,
         }
 
-    # No cache — generate on demand from current detection data.
+    # No cache - generate on demand from current detection data.
     detection = latest_detections.get(camera_id)
     if detection is None:
         raise HTTPException(
@@ -998,7 +1113,7 @@ async def api_cameras(include_catalogue: bool = True):
     """Cameras with live detection state, plus the rest of the MYT catalogue.
 
     MYT publishes 38 cameras island-wide but only the ACTIVE_CAMERAS subset has
-    detection running — each one costs an ffmpeg subprocess and a YOLO
+    detection running - each one costs an ffmpeg subprocess and a YOLO
     inference, which CPU-only inference cannot sustain across all of them. The
     remainder are returned with ``monitored: false`` so the map can show the
     full network without implying data exists for every marker.
@@ -1054,7 +1169,7 @@ async def api_cameras(include_catalogue: bool = True):
                 "directions":       {},
                 "is_two_way":       False,
                 "is_mock":          False,
-                # Catalogued but not processed — no detection data exists.
+                # Catalogued but not processed - no detection data exists.
                 "monitored":        False,
                 "region":           cam["region"],
                 "coords_precision": cam["coords_precision"],
@@ -1066,7 +1181,7 @@ async def api_cameras(include_catalogue: bool = True):
 async def api_camera_frame(camera_id: str):
     """Latest annotated JPEG frame for a live camera, boxes already drawn.
 
-    Behind the same auth as every other /api/* route — the original audit's
+    Behind the same auth as every other /api/* route - the original audit's
     headline finding was unauthenticated API routes, and camera footage is
     exactly the kind of thing that should not be reintroduced as one.
 
@@ -1301,7 +1416,7 @@ async def api_analytics_hourly(hours: int = 24):
             """), {"h": hours})).mappings().all()
     except SQLAlchemyError as exc:
         logger.warning("[db] Analytics query failed: %s", exc, exc_info=True)
-        empty["reason"] = "Analytics query failed — see server logs."
+        empty["reason"] = "Analytics query failed - see server logs."
         return empty
 
     if not rows:
@@ -1325,7 +1440,7 @@ async def api_analytics_hourly(hours: int = 24):
 @app.websocket("/ws/detections")
 async def ws_detections(websocket: WebSocket):
     # The socket carries the same live data as the REST API, so it needs the
-    # same authentication — it was previously open to anyone.
+    # same authentication - it was previously open to anyone.
     if not await websocket_user(websocket):
         await websocket.close(code=1008, reason="Authentication required")
         return
@@ -1368,7 +1483,7 @@ if __name__ == "__main__":
     if os.path.exists("cert.pem") and os.path.exists("key.pem"):
         ssl_args = {"ssl_certfile": "cert.pem", "ssl_keyfile": "key.pem"}
 
-    # reload=False is intentional — StatReload + OneDrive causes spurious
+    # reload=False is intentional - StatReload + OneDrive causes spurious
     # reloads that cancel the lifespan mid-startup.  Use the explicit
     # uvicorn CLI if you need hot-reload during development:
     #   python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload

@@ -5,14 +5,14 @@ Pluggable backends for traffic-summary generation.
 Why this exists
 ---------------
 The summary service previously called Anthropic directly, so switching model
-vendor meant editing the service itself — and everything valuable in that
+vendor meant editing the service itself - and everything valuable in that
 service (circuit breaker, retry/backoff, per-camera caching, template
 fallback) is vendor-independent. This module isolates the one part that is
 vendor-specific: turning a system prompt plus a user prompt into a string.
 
 Selection is by environment, so moving between providers is a config change:
 
-    SUMMARY_PROVIDER=template   # no API, no cost — the built-in fallback text
+    SUMMARY_PROVIDER=template   # no API, no cost - the built-in fallback text
     SUMMARY_PROVIDER=gemini     # Google Gemini
     SUMMARY_PROVIDER=anthropic  # Claude
 
@@ -21,7 +21,7 @@ nothing in the calling service changes.
 
 Error contract
 --------------
-`generate()` raises `ProviderUnavailable` for conditions no retry can fix — no
+`generate()` raises `ProviderUnavailable` for conditions no retry can fix - no
 key configured, SDK not installed, provider disabled. Everything else
 propagates the SDK's own exception so `is_retryable()` can classify it, which
 is what drives the caller's backoff and circuit breaker.
@@ -62,7 +62,7 @@ GEMINI_THINKING_ALLOWANCE = int(os.environ.get("GEMINI_THINKING_ALLOWANCE", "650
 
 
 class ProviderUnavailable(RuntimeError):
-    """Permanent configuration problem — retrying cannot help."""
+    """Permanent configuration problem - retrying cannot help."""
 
 
 def _env(name: str, default: str = "") -> str:
@@ -82,7 +82,7 @@ def active_provider() -> str:
     provider = _env("SUMMARY_PROVIDER", DEFAULT_PROVIDER).lower()
     if provider not in (TEMPLATE, GEMINI, ANTHROPIC):
         logger.warning(
-            "Unknown SUMMARY_PROVIDER %r — falling back to %r. Valid values: "
+            "Unknown SUMMARY_PROVIDER %r - falling back to %r. Valid values: "
             "%s, %s, %s.", provider, TEMPLATE, TEMPLATE, GEMINI, ANTHROPIC,
         )
         return TEMPLATE
@@ -124,7 +124,7 @@ def is_retryable(exc: Exception) -> bool:
                 return False
             # Not every 429 is transient. A project with no free-tier
             # allocation reports "limit: 0", and a daily cap will not reset
-            # within any sensible backoff — retrying either just burns the
+            # within any sensible backoff - retrying either just burns the
             # retry budget and floods the log. Only a genuine per-minute rate
             # limit is worth another attempt.
             msg = str(exc)
@@ -137,7 +137,7 @@ def is_retryable(exc: Exception) -> bool:
     if isinstance(status, int):
         return status not in (400, 401, 403, 404, 422)
 
-    return True          # network/timeout — worth another attempt
+    return True          # network/timeout - worth another attempt
 
 
 # ── Backends ──────────────────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ async def _call_gemini(system: str, user: str, max_tokens: int) -> str:
 
     # Gemini 3 reasons before answering and those thinking tokens are charged
     # against max_output_tokens. Measured on gemini-3-flash-preview, a
-    # two-sentence traffic summary spends 140-270 tokens thinking — so passing
+    # two-sentence traffic summary spends 140-270 tokens thinking - so passing
     # the caller's 150-token cap straight through left ~6 tokens for the actual
     # answer and returned a truncated fragment. The visible-text budget is
     # therefore the caller's value plus an allowance for reasoning.

@@ -11,7 +11,7 @@ you get *less* data from more cameras. The limit is:
     sustainable cameras = FRAME_INTERVAL / seconds_per_inference
 
 The defaults (yolov8m at imgsz 1280) cost ~890 ms per frame on a 16-core CPU,
-which sustains barely two cameras at a 2-second interval — so even the original
+which sustains barely two cameras at a 2-second interval - so even the original
 four were oversubscribed. Note 1280 *upscales* a 1024x576 stream.
 
 This measures your actual hardware and prints the configuration to put in .env.
@@ -22,7 +22,7 @@ This measures your actual hardware and prints the configuration to put in .env.
 Accuracy trade-off
 ------------------
 A smaller model or a smaller imgsz detects fewer small and distant vehicles.
-That changes vehicle counts, which changes saturation, which changes severity —
+That changes vehicle counts, which changes saturation, which changes severity -
 so CAMERA_CAPACITY in detection/severity.py is calibrated against whatever
 settings were in use when the data was collected. Change these and recalibrate
 with tools/calibrate_capacity.py, or severity will drift.
@@ -109,7 +109,7 @@ def recommend(measured: dict, cameras: int, max_interval: float) -> None:
 
     path, imgsz, interval = best
     sustainable = interval / measured[(path, imgsz)]
-    print(f"\nRecommended — put this in .env:\n")
+    print(f"\nRecommended - put this in .env:\n")
     print(f"  YOLO_MODEL={path}")
     print(f"  YOLO_IMGSZ={imgsz}")
     print(f"  FRAME_INTERVAL={interval:.0f}")
@@ -117,7 +117,7 @@ def recommend(measured: dict, cameras: int, max_interval: float) -> None:
     print(f"\nThat sustains about {sustainable:.0f} cameras; you asked for {cameras}.")
     if path.endswith("n.pt") or imgsz < 1280:
         print("\nNote: this is a smaller model and/or resolution than the default,\n"
-              "so counts will be lower — small and distant vehicles get missed.\n"
+              "so counts will be lower - small and distant vehicles get missed.\n"
               "Recalibrate with tools/calibrate_capacity.py once data accumulates,\n"
               "or severity thresholds will be miscalibrated against the new counts.")
 

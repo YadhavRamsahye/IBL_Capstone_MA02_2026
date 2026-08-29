@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_streams.py — standalone MYT stream connectivity tester
+test_streams.py - standalone MYT stream connectivity tester
 Run: python test_streams.py
 """
 from __future__ import annotations
@@ -29,25 +29,25 @@ except ImportError:
 CAMERAS = [
     {
         "camera_id":   "caudan_north",
-        "name":        "Caudan North — Port Louis",
+        "name":        "Caudan North - Port Louis",
         "stream_base": "https://stream.myt.mu/rh/prod/CAUDAN_NORTH.stream_720p",
         "_chunklist_fallback": "https://stream.myt.mu/rh/prod/CAUDAN_NORTH.stream_720p/chunklist_w998681874.m3u8",
     },
     {
         "camera_id":   "caudan_south",
-        "name":        "Caudan South — Port Louis",
+        "name":        "Caudan South - Port Louis",
         "stream_base": "https://stream.myt.mu/prod/CAUDAN_SOUTH.stream_720p",
         "_chunklist_fallback": "https://stream.myt.mu/prod/CAUDAN_SOUTH.stream_720p/chunklist_w674657069.m3u8",
     },
     {
         "camera_id":   "la_chaussee",
-        "name":        "La Chaussee Street — Port Louis",
+        "name":        "La Chaussee Street - Port Louis",
         "stream_base": "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p",
         "_chunklist_fallback": "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist_w228974167.m3u8",
     },
     {
         "camera_id":   "casernes",
-        "name":        "Casernes / Brabant Street — Port Louis",
+        "name":        "Casernes / Brabant Street - Port Louis",
         "stream_base": "https://stream.myt.mu/prod/CASERNES_BRABANT_STREET.stream_720p",
         "_chunklist_fallback": "https://stream.myt.mu/prod/CASERNES_BRABANT_STREET.stream_720p/chunklist_w1553997703.m3u8",
     },
@@ -185,7 +185,7 @@ def main() -> None:
             print(f"  {tag}  {reason}")
             results[cid] = {"url": working_url, "http": True, "frame": ok}
         else:
-            print("\n  FRAME  skipped — no URL returned HTTP 200")
+            print("\n  FRAME  skipped - no URL returned HTTP 200")
             results[cid] = {"url": None, "http": False, "frame": False}
 
     # ── Summary ───────────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ def main() -> None:
     for cid, r in results.items():
         http_icon  = "PASS" if r["http"]  else "FAIL"
         frame_icon = "PASS" if r["frame"] else "FAIL"
-        url = r["url"] or "—"
+        url = r["url"] or "-"
         print(f"  {cid:<22}  HTTP:{http_icon}  FRAME:{frame_icon}  {url}")
 
     if all_http_fail:
@@ -206,7 +206,7 @@ def main() -> None:
         print("  Possible causes: no internet, VPN/firewall, or stream URLs rotated.")
         fresh = scrape_live_urls()
         if fresh:
-            print("\n  Fresh URLs scraped from MYT page — update trafficwatch.py with these:")
+            print("\n  Fresh URLs scraped from MYT page - update trafficwatch.py with these:")
             for u in fresh:
                 print(f"    {u}")
         else:

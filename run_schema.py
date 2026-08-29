@@ -2,12 +2,12 @@
 run_schema.py
 Create the TrafficSystem database and apply schema.sql to it.
 
-Author : Mokshan Mehess (22703417) — Document Lead
+Author : Mokshan Mehess (22703417) - Document Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System
+Team   : IBL Group - Traffic Bottleneck Detection System
 
 This script used to carry its own inline copy of the DDL, which had drifted from
-schema.sql — different column names, different quoting — so the schema you ended
+schema.sql - different column names, different quoting - so the schema you ended
 up with depended on which file you ran. schema.sql is now the only definition
 and this script simply executes it.
 
@@ -48,7 +48,7 @@ async def run() -> None:
     if not SCHEMA_FILE.exists():
         sys.exit(f"schema.sql not found next to {__file__}")
 
-    # Step 1 — create the database if it does not exist. CREATE DATABASE cannot
+    # Step 1 - create the database if it does not exist. CREATE DATABASE cannot
     # run inside a transaction, so it needs its own connection to `postgres`.
     conn = await asyncpg.connect(
         host=HOST, port=PORT, user=USER, password=PASSWORD, database="postgres"
@@ -67,7 +67,7 @@ async def run() -> None:
     finally:
         await conn.close()
 
-    # Step 2 — apply the schema. Every statement is idempotent (IF NOT EXISTS /
+    # Step 2 - apply the schema. Every statement is idempotent (IF NOT EXISTS /
     # duplicate_object guards), so re-running this is safe.
     conn = await asyncpg.connect(
         host=HOST, port=PORT, user=USER, password=PASSWORD, database=DB_NAME

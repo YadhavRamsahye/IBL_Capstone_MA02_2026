@@ -1,7 +1,7 @@
 """
-Author : Yadhav Sharma Ramsahye (22108355) — Scrum Master
+Author : Yadhav Sharma Ramsahye (22108355) - Scrum Master
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System
+Team   : IBL Group - Traffic Bottleneck Detection System
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def test_template_fallback() -> None:
 # ── Test 3: TrafficSummaryService with fallback ──────────────────────────
 
 async def test_service_fallback() -> None:
-    divider("TEST 3: TrafficSummaryService — Fallback Mode")
+    divider("TEST 3: TrafficSummaryService - Fallback Mode")
 
     # Force the template backend via the same kill switch main.py exposes
     # (CLAUDE_API_DISABLED=1), regardless of which provider/key .env has
@@ -142,7 +142,7 @@ async def test_service_fallback() -> None:
         # Test caching
         cached = service.get_cached_summary("port_louis")
         assert cached is not None, "Cache should have an entry for port_louis"
-        print("[PASS] Caching works — cached summary retrieved for port_louis")
+        print("[PASS] Caching works - cached summary retrieved for port_louis")
 
     finally:
         if original_disabled is None:
@@ -159,12 +159,12 @@ async def test_live_api() -> None:
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        print("  [SKIP] ANTHROPIC_API_KEY not set in .env — skipping live test.")
+        print("  [SKIP] ANTHROPIC_API_KEY not set in .env - skipping live test.")
         print("         To run this test, create a .env file with your key:")
         print("         ANTHROPIC_API_KEY=sk-ant-api03-your-key-here")
         return
 
-    print("  API key detected — making a live Claude API call...\n")
+    print("  API key detected - making a live Claude API call...\n")
 
     # Force the anthropic backend for this probe regardless of the .env
     # default (SUMMARY_PROVIDER=template) — otherwise generate_summary()
@@ -221,8 +221,8 @@ async def test_live_api() -> None:
 
 async def main() -> None:
     print("\n" + "#" * 60)
-    print("#  Claude API Module — Integration Test Suite")
-    print("#  IBL Capstone — Traffic Bottleneck Detection System")
+    print("#  Claude API Module - Integration Test Suite")
+    print("#  IBL Capstone - Traffic Bottleneck Detection System")
     print("#" * 60)
 
     test_helpers()

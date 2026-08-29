@@ -20,9 +20,9 @@ a single coincidental frame flipped the badge on.
 
 What this does instead
 ----------------------
-Associates boxes between frames by IoU (matching identity — "is this the same
+Associates boxes between frames by IoU (matching identity - "is this the same
 vehicle") and separately measures whether that vehicle moved by normalised
-centroid displacement (its own box diagonal, not IoU, not raw pixels — see
+centroid displacement (its own box diagonal, not IoU, not raw pixels - see
 2026-08-07 below), then requires "did not move" to hold for a sustained
 period before reporting anything.
 
@@ -34,7 +34,7 @@ Three real problems, found with tools/incident_harness.py rather than
 guessed:
 
 * STATIONARY_IOU=0.85 measured "did not move" as box-overlap, which
-  penalises ordinary YOLO box-size jitter as much as real displacement — an
+  penalises ordinary YOLO box-size jitter as much as real displacement - an
   8% shrink/grow on a re-detection reads as "moved" even at zero centroid
   displacement. Replaced with centroid displacement normalised by the box's
   own diagonal, which is insensitive to the box's size wobbling.
@@ -49,10 +49,10 @@ guessed:
   rather than trusting the constant.
 
 STATIONARY_CENTROID_FRAC below is still provisional: live footage during
-this recalibration was empty, rainy-night streets on every covered camera —
+this recalibration was empty, rainy-night streets on every covered camera -
 no genuinely stationary vehicle was available to sample. What *is* measured
 is a floor: identical input frames (confirmed via the HLS segment's ~10-11s
-refresh interval — polling faster than that re-decodes the same segment,
+refresh interval - polling faster than that re-decodes the same segment,
 see incident_harness.py's --gap warning) produce byte-identical detection
 boxes, so YOLO's own regression contributes zero jitter on truly unchanged
 pixels. Real jitter comes from genuinely different frames of the same
@@ -60,7 +60,7 @@ physical vehicle, which needs daytime traffic to sample. Re-run
 `python tools/incident_harness.py measure --camera <id> --gap 11` next time
 real stopped traffic is visible, and tighten this from the printed p90.
 
-This cannot make incident detection certain — a long light, a stalled delivery
+This cannot make incident detection certain - a long light, a stalled delivery
 van, and a collision are genuinely indistinguishable from bounding boxes alone.
 It is built to make a *positive* report mean something, accepting that slow or
 missed detections are the cost.
@@ -89,7 +89,7 @@ MATCH_IOU = 0.30
 # (large-box) and distant (small-box) vehicle are held to the same real-world
 # standard, and so ordinary box-size jitter (regression noise on width/height,
 # not position) doesn't read as movement the way an IoU threshold did.
-# PROVISIONAL — not yet measured against a real stationary vehicle; see the
+# PROVISIONAL - not yet measured against a real stationary vehicle; see the
 # 2026-08-07 note in the module docstring and tools/incident_harness.py.
 STATIONARY_CENTROID_FRAC = 0.04
 
@@ -148,7 +148,7 @@ class _Track:
     stationary_frames: int = 0
     missed_frames: int = 0
     # Centre when this vehicle was first seen. Displacement from here is what
-    # gives the vehicle a direction of travel — see detection/direction.py.
+    # gives the vehicle a direction of travel - see detection/direction.py.
     origin: tuple[float, float] = (0.0, 0.0)
     age_frames: int = 0
     # COCO class id, carried so per-direction PCU can be computed from the same
@@ -257,7 +257,7 @@ class StationaryTracker:
         if fraction < MIN_STATIONARY_FRACTION:
             verdict.reason = (
                 f"{fraction:.0%} of traffic stalled (need "
-                f"{MIN_STATIONARY_FRACTION:.0%}) — traffic still flowing"
+                f"{MIN_STATIONARY_FRACTION:.0%}) - traffic still flowing"
             )
             return verdict
 
@@ -274,7 +274,7 @@ class StationaryTracker:
         verdict.is_incident = True
         verdict.reason = (
             f"{n_stat} of {n_vis} vehicles stationary for "
-            f"{stalled_seconds:.0f}s — traffic is stopped, not flowing"
+            f"{stalled_seconds:.0f}s - traffic is stopped, not flowing"
         )
         return verdict
 
@@ -287,7 +287,7 @@ class StationaryTracker:
         return [t for t in self._tracks if t.missed_frames == 0]
 
     def reset(self) -> None:
-        """Drop all state — call when a stream reconnects and continuity breaks
+        """Drop all state - call when a stream reconnects and continuity breaks
         (e.g. a fresh outer retry in hls_pipeline.run_hls_pipeline, which
         constructs a new tracker anyway; kept for callers that don't)."""
         self._tracks.clear()

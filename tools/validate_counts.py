@@ -18,7 +18,7 @@ Workflow
    containing one row per frame with an empty `true_count` column.
 
 2. Open each image, count the vehicles yourself, and fill in `true_count`.
-   Count what a human would call a vehicle in the drivable area — this is the
+   Count what a human would call a vehicle in the drivable area - this is the
    reference, so be consistent and write down your rule.
 
 3. Score the detector against your labels:
@@ -31,7 +31,7 @@ Interpreting the output
 -----------------------
 `bias` is the one to watch. A large negative bias means the detector
 systematically under-counts, which is the expected failure mode at night and on
-distant/occluded vehicles — and it is exactly the effect that makes a busy road
+distant/occluded vehicles - and it is exactly the effect that makes a busy road
 look "free". Run this separately on day and night captures; if the two biases
 differ materially, that difference is a measured lighting bias, not a guess.
 """
@@ -85,7 +85,7 @@ def capture(camera: str, n: int, interval: float) -> None:
             time.sleep(interval)
 
     if not rows:
-        sys.exit("No frames captured — is the stream reachable?")
+        sys.exit("No frames captured - is the stream reachable?")
 
     with _labels_path(camera).open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=["frame", "true_count"])
@@ -114,7 +114,7 @@ def score(camera: str) -> None:
     with path.open(encoding="utf-8") as fh:
         rows = [r for r in csv.DictReader(fh) if r["true_count"].strip()]
     if not rows:
-        sys.exit("No labelled rows — fill in the `true_count` column first.")
+        sys.exit("No labelled rows - fill in the `true_count` column first.")
 
     model = YOLO(MODEL_PATH)
     errors, truths, preds = [], [], []
@@ -165,7 +165,7 @@ def score(camera: str) -> None:
     print(f"MAPE               : {mape:.1f}%")
     print(f"severity agreement : {sev_agree}/{n} ({sev_agree / n:.0%})")
     if n < 20:
-        print("\nNote: fewer than 20 frames — treat these figures as indicative "
+        print("\nNote: fewer than 20 frames - treat these figures as indicative "
               "only, not as a validated accuracy claim.")
 
 

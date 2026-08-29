@@ -15,7 +15,7 @@ Module   : Dashboard UI / Templates
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>API Live Test Monitor — Traffic Bottleneck Detection</title>
+<title>API Live Test Monitor - Traffic Bottleneck Detection</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -169,11 +169,11 @@ Module   : Dashboard UI / Templates
       </div>
       <div class="header-titles">
         <h1>API Live Test Monitor</h1>
-        <p>Traffic Bottleneck Detection System — localhost:8000</p>
+        <p>Traffic Bottleneck Detection System - localhost:8000</p>
       </div>
     </div>
     <div class="header-right">
-      <div class="last-refresh">Last refresh: <span id="lastRefresh">—</span></div>
+      <div class="last-refresh">Last refresh: <span id="lastRefresh">-</span></div>
       <div class="live-badge" id="liveBadge">
         <div class="pulse-dot" id="pulseDot"></div>
         <span id="liveLabel">Live</span>
@@ -195,21 +195,21 @@ Module   : Dashboard UI / Templates
           <span class="endpoint-tag"><span class="method">GET</span>/api/status</span>
         </div>
         <div class="status-rows">
-          <div class="status-row"><span class="status-key">system</span><span class="status-val val-online" id="sv-system">—</span></div>
-          <div class="status-row"><span class="status-key">active_cameras</span><span class="status-val" id="sv-cameras">—</span></div>
-          <div class="status-row"><span class="status-key">total_detections</span><span class="status-val" id="sv-total">—</span></div>
-          <div class="status-row"><span class="status-key">bottlenecks</span><span class="status-val" id="sv-bottlenecks">—</span></div>
+          <div class="status-row"><span class="status-key">system</span><span class="status-val val-online" id="sv-system">-</span></div>
+          <div class="status-row"><span class="status-key">active_cameras</span><span class="status-val" id="sv-cameras">-</span></div>
+          <div class="status-row"><span class="status-key">total_detections</span><span class="status-val" id="sv-total">-</span></div>
+          <div class="status-row"><span class="status-key">bottlenecks</span><span class="status-val" id="sv-bottlenecks">-</span></div>
         </div>
         <hr class="section-divider">
         <div>
           <div class="bar-chart-label" style="margin-bottom:10px">Endpoint Health</div>
           <div class="health-list">
-            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/traffic</span><span class="status-pill pill-na" id="hp-traffic">—</span></div>
-            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/status</span><span class="status-pill pill-na" id="hp-status">—</span></div>
-            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/alerts</span><span class="status-pill pill-na" id="hp-alerts">—</span></div>
-            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/summaries</span><span class="status-pill pill-na" id="hp-summaries">—</span></div>
-            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/cameras</span><span class="status-pill pill-na" id="hp-cameras">—</span></div>
-            <div class="health-row"><span class="health-ep"><span class="method">POST</span> /api/alerts/trigger</span><span class="status-pill pill-na" id="hp-trigger">—</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/traffic</span><span class="status-pill pill-na" id="hp-traffic">-</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/status</span><span class="status-pill pill-na" id="hp-status">-</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/alerts</span><span class="status-pill pill-na" id="hp-alerts">-</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/summaries</span><span class="status-pill pill-na" id="hp-summaries">-</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">GET</span> /api/cameras</span><span class="status-pill pill-na" id="hp-cameras">-</span></div>
+            <div class="health-row"><span class="health-ep"><span class="method">POST</span> /api/alerts/trigger</span><span class="status-pill pill-na" id="hp-trigger">-</span></div>
           </div>
         </div>
       </div>
@@ -221,7 +221,7 @@ Module   : Dashboard UI / Templates
           <span class="endpoint-tag"><span class="method">GET</span>/api/alerts</span>
         </div>
         <div class="alert-list" id="alertList">
-          <div class="alert-empty" id="alertEmpty">No alerts yet — trigger one below or wait for auto-alerts</div>
+          <div class="alert-empty" id="alertEmpty">No alerts yet - trigger one below or wait for auto-alerts</div>
         </div>
         <button class="trigger-btn" id="triggerBtn" onclick="triggerAlert()">⚡ Trigger test alert</button>
       </div>
@@ -236,7 +236,7 @@ Module   : Dashboard UI / Templates
       </div>
     </div>
 
-    <div class="footer">IBL Capstone MA02 2026 &nbsp;·&nbsp; AI Traffic Bottleneck Detection — Mauritius</div>
+    <div class="footer">IBL Capstone MA02 2026 &nbsp;·&nbsp; AI Traffic Bottleneck Detection - Mauritius</div>
   </div>
 </div>
 
@@ -254,7 +254,7 @@ function displayName(id) { return id.replace(/_/g,' ').replace(/\b\w/g, c=>c.toU
 
 function setPill(id, code) {
   const e = el(id); if (!e) return;
-  if (code === null)    { e.textContent='—';   e.className='status-pill pill-na'; }
+  if (code === null)    { e.textContent='-';   e.className='status-pill pill-na'; }
   else if (code === 200){ e.textContent='200'; e.className='status-pill pill-ok'; }
   else if (code === 201){ e.textContent='201'; e.className='status-pill pill-201'; }
   else                  { e.textContent='ERR'; e.className='status-pill pill-err'; }
@@ -279,9 +279,9 @@ function buildCameraCard(camId, name) {
       <div class="severity-badge badge-free" id="badge-${camId}">FREE</div>
     </div>
     <div class="cam-stats">
-      <div class="stat-item"><span class="stat-label">Vehicles</span><span class="stat-value" id="count-${camId}">—</span></div>
-      <div class="stat-item"><span class="stat-label">FPS</span><span class="stat-value small" id="fps-${camId}">—</span></div>
-      <div class="stat-item"><span class="stat-label">Frame</span><span class="stat-value small" id="frame-${camId}">—</span></div>
+      <div class="stat-item"><span class="stat-label">Vehicles</span><span class="stat-value" id="count-${camId}">-</span></div>
+      <div class="stat-item"><span class="stat-label">FPS</span><span class="stat-value small" id="fps-${camId}">-</span></div>
+      <div class="stat-item"><span class="stat-label">Frame</span><span class="stat-value small" id="frame-${camId}">-</span></div>
     </div>
     <div class="ai-summary-box" id="summary-box-${camId}">
       <div class="ai-summary-header">
@@ -290,8 +290,8 @@ function buildCameraCard(camId, name) {
       </div>
       <div class="ai-summary-text waiting" id="summary-text-${camId}">Generating summary…</div>
     </div>
-    <div><div class="bar-chart-label">Vehicle count — last ${CHART_SIZE} readings</div><div class="bar-chart" id="chart-${camId}"></div></div>
-    <div class="cam-timestamp" id="ts-${camId}">—</div>
+    <div><div class="bar-chart-label">Vehicle count - last ${CHART_SIZE} readings</div><div class="bar-chart" id="chart-${camId}"></div></div>
+    <div class="cam-timestamp" id="ts-${camId}">-</div>
   </div>`;
 }
 
@@ -332,11 +332,11 @@ function updateCamera(data) {
   if(dot){dot.style.background=col;dot.style.color=col;dot.style.boxShadow=`0 0 8px ${col}`;}
   const badge=el('badge-'+id);
   if(badge){badge.textContent=sev.toUpperCase();badge.className=`severity-badge badge-${sev}`;}
-  setText('count-'+id, data.vehicle_count??'—');
-  setText('fps-'+id, data.fps_processed!=null?data.fps_processed.toFixed(1):'—');
+  setText('count-'+id, data.vehicle_count??'-');
+  setText('fps-'+id, data.fps_processed!=null?data.fps_processed.toFixed(1):'-');
   const sh=data.frame_shape;
-  setText('frame-'+id, sh?`${sh[1]}×${sh[0]}`:'—');
-  setText('ts-'+id, data.timestamp?new Date(data.timestamp).toLocaleTimeString():'—');
+  setText('frame-'+id, sh?`${sh[1]}×${sh[0]}`:'-');
+  setText('ts-'+id, data.timestamp?new Date(data.timestamp).toLocaleTimeString():'-');
   updateChart(id, data.vehicle_count||0, sev);
 }
 
@@ -357,11 +357,11 @@ function updateSummaries(summaries) {
 
 function updateStatus(data) {
   const sys=el('sv-system');
-  if(sys){sys.textContent=data.system||'—';sys.className='status-val '+(data.system==='online'?'val-online':'val-offline');}
-  setText('sv-cameras',data.active_cameras||'—');
-  setText('sv-total',data.total_detections||'—');
+  if(sys){sys.textContent=data.system||'-';sys.className='status-val '+(data.system==='online'?'val-online':'val-offline');}
+  setText('sv-cameras',data.active_cameras||'-');
+  setText('sv-total',data.total_detections||'-');
   const bn=el('sv-bottlenecks');
-  if(bn){bn.textContent=data.bottlenecks||'—';bn.className='status-val '+(data.bottlenecks>0?'val-offline':'');}
+  if(bn){bn.textContent=data.bottlenecks||'-';bn.className='status-val '+(data.bottlenecks>0?'val-offline':'');}
 }
 
 function updateAlerts(alerts) {
@@ -376,7 +376,7 @@ function updateAlerts(alerts) {
     let summaryHtml='';
     if(a.summary){
       const src=a.source==='claude_api'?'Claude AI':'Template';
-      summaryHtml=`<div class="alert-summary"><div class="alert-summary-label">AI Analysis — ${src}</div>${a.summary}</div>`;
+      summaryHtml=`<div class="alert-summary"><div class="alert-summary-label">AI Analysis - ${src}</div>${a.summary}</div>`;
     } else if(a.message){
       summaryHtml=`<div class="alert-summary"><div class="alert-summary-label">Message</div>${a.message}</div>`;
     }

@@ -9,7 +9,7 @@ lists dozens of models and still returns
 
     429 RESOURCE_EXHAUSTED ... limit: 0, model: gemini-2.0-flash
 
-for most of them — `limit: 0` meaning that model has no free-tier allocation on
+for most of them - `limit: 0` meaning that model has no free-tier allocation on
 this project at all, not that you used it up. Listing models tells you nothing
 about this; the only reliable check is to send a real request.
 
@@ -40,7 +40,7 @@ load_dotenv(pathlib.Path(__file__).resolve().parent.parent / ".env")
 
 import os                               # noqa: E402
 
-# Gemma is served by the same endpoint and needs no code change — it is just
+# Gemma is served by the same endpoint and needs no code change - it is just
 # another value for GEMINI_MODEL. Included here so the trade-off is visible:
 # measured on this project's prompt, Gemma answers at comparable quality but
 # roughly 3-4x slower than Gemini 3 Flash.
@@ -73,7 +73,7 @@ def probe(client, model: str, max_tokens: int) -> None:
 
         if not text:
             print(f"  {model:26s} QUOTA OK but EMPTY  "
-                  f"(thinking={thoughts}, visible={out}) — raise max_output_tokens")
+                  f"(thinking={thoughts}, visible={out}) - raise max_output_tokens")
             return
         print(f"  {model:26s} WORKS  {time.time()-t0:5.1f}s  "
               f"thinking={thoughts:4d} visible={out:3d}")
@@ -83,7 +83,7 @@ def probe(client, model: str, max_tokens: int) -> None:
         if "limit: 0" in msg:
             print(f"  {model:26s} NO FREE QUOTA (limit: 0 for this model)")
         elif getattr(exc, "code", None) == 429:
-            print(f"  {model:26s} RATE LIMITED (has quota — retry shortly)")
+            print(f"  {model:26s} RATE LIMITED (has quota - retry shortly)")
         elif getattr(exc, "code", None) == 404:
             print(f"  {model:26s} NOT AVAILABLE to this key")
         else:

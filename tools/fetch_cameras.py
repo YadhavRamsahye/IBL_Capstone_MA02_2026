@@ -7,7 +7,7 @@ Why generate rather than scrape at startup
 detection/trafficwatch.py used to carry four hand-written camera entries, so the
 system covered central Port Louis while MYT publishes 38 cameras island-wide.
 Scraping live on every boot would keep the list current but makes startup depend
-on MYT's page being up and unchanged — a layout change would leave the app with
+on MYT's page being up and unchanged - a layout change would leave the app with
 no cameras at all.
 
 So the page is parsed here, offline, into a checked-in Python module. The
@@ -271,7 +271,7 @@ def render(cameras: list[dict]) -> str:
         '"""',
         "detection/camera_catalogue.py",
         "",
-        f"GENERATED FILE — do not edit by hand.",
+        f"GENERATED FILE - do not edit by hand.",
         f"Regenerate with:  python tools/fetch_cameras.py",
         "",
         f"Source : {MYT_PAGE}",
@@ -344,7 +344,7 @@ def main() -> None:
 
     cameras = scrape()
     if not cameras:
-        sys.exit("No cameras found — MYT's page layout may have changed. "
+        sys.exit("No cameras found - MYT's page layout may have changed. "
                  "The existing catalogue has been left untouched.")
 
     # Duplicate ids would silently drop cameras from the dict lookup.

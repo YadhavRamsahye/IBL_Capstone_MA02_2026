@@ -1,7 +1,7 @@
 """
-Author : Yadhav Sharma Ramsahye (22108355) — Scrum Master
+Author : Yadhav Sharma Ramsahye (22108355) - Scrum Master
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System
+Team   : IBL Group - Traffic Bottleneck Detection System
 """
 from __future__ import annotations
 

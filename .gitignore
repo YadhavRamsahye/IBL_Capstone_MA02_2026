@@ -1,4 +1,4 @@
-# Environment secrets — NEVER commit these
+# Environment secrets - NEVER commit these
 .env
 
 # Python
@@ -17,7 +17,7 @@ venv/
 .vscode/
 .idea/
 
-# Stray backups and archives — never intended to be tracked
+# Stray backups and archives - never intended to be tracked
 main copy.py
 *.bak
 *.zip
@@ -26,3 +26,6 @@ IBL_Capstone_MA02_2026/
 # Overpass API response cache - regenerable, and re-fetching costs the
 # shared free API nothing worth avoiding on a fresh checkout
 tools/validate_camera_coords_cache/
+
+# Dev email outbox (contains live reset links)
+sent_emails/

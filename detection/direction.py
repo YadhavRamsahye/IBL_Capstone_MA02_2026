@@ -13,7 +13,7 @@ no answer.
 
 Why position, not motion
 ------------------------
-The obvious approach is to use each vehicle's motion vector — it moved right,
+The obvious approach is to use each vehicle's motion vector - it moved right,
 so it is eastbound. That fails exactly when the data matters most: a queued
 vehicle has no motion, so in the jam you are trying to detect, every vehicle
 becomes unclassifiable. Congestion would systematically fall out of the
@@ -35,7 +35,7 @@ flowing. It watches vehicles, works out the dominant axis of travel and where
 the two streams separate, and prints a config block to paste in here.
 
 An unconfigured camera reports a single "combined" direction, which is exactly
-the previous behaviour — so adding this changed nothing until a camera is
+the previous behaviour - so adding this changed nothing until a camera is
 calibrated.
 """
 
@@ -89,7 +89,7 @@ class DirectionConfig:
 # ── Per-camera configuration ──────────────────────────────────────────────────
 # Empty until calibrated. Deliberately not guessed: the dividing line depends on
 # where each camera is mounted and which way it points, and inventing values
-# would silently produce confident, wrong per-direction numbers — worse than the
+# would silently produce confident, wrong per-direction numbers - worse than the
 # single aggregate this replaces.
 #
 # Populate with the output of tools/calibrate_direction.py, e.g.
@@ -131,7 +131,7 @@ def motion_direction(displacement: tuple[float, float],
     """Sign of travel along `axis`, or None when the vehicle has barely moved.
 
     Used for calibration and as the fallback for uncalibrated cameras. Returning
-    None rather than guessing is deliberate — a stationary vehicle genuinely has
+    None rather than guessing is deliberate - a stationary vehicle genuinely has
     no direction, and inventing one is how queued traffic ends up misattributed.
     """
     dx, dy = displacement

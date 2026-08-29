@@ -1,7 +1,7 @@
 """
-Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Author : Sahil Singh Rughoo (22414560) - Tech Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
@@ -82,8 +82,8 @@ def _grab_one_frame(hls_url: str, width: int = 1280, height: int = 720) -> bool:
 
 def main() -> None:
     _divider("═")
-    print("  MYT Traffic Watch — Camera Discovery & HLS Test")
-    print("  IBL Capstone MA02 2026 — Mauritius")
+    print("  MYT Traffic Watch - Camera Discovery & HLS Test")
+    print("  IBL Capstone MA02 2026 - Mauritius")
     _divider("═")
     print()
 
@@ -133,7 +133,7 @@ def main() -> None:
     _divider()
 
     for i, cam in enumerate(cameras, 1):
-        src       = cam.get("source", "—")
+        src       = cam.get("source", "-")
         validated = cam.get("validated", False)
         v_label   = "validated" if validated else "unvalidated"
         is_mock   = src == "mock"
@@ -142,9 +142,9 @@ def main() -> None:
         print(f"  [{i}] {cam['camera_id']}")
         print(f"      Name        : {cam['name']}")
         print(f"      Source      : {src}")
-        print(f"      Stream base : {cam.get('stream_base', '—')}")
+        print(f"      Stream base : {cam.get('stream_base', '-')}")
         print(f"      Type        : {type_tag}  ({v_label})")
-        print(f"      Origin      : {cam.get('origin', '—')}")
+        print(f"      Origin      : {cam.get('origin', '-')}")
         print()
 
     # ── 4. Frame-grab test ────────────────────────────────────────────────────
@@ -158,10 +158,10 @@ def main() -> None:
     )
 
     if not grab_target:
-        print("  No HLS cameras available — skipping frame grab test.")
+        print("  No HLS cameras available - skipping frame grab test.")
 
     elif not ffmpeg_ok:
-        print("  ffmpeg not installed — cannot perform frame grab.")
+        print("  ffmpeg not installed - cannot perform frame grab.")
         print("  Install ffmpeg and re-run this script to test frame capture.")
 
     else:
@@ -179,7 +179,7 @@ def main() -> None:
             print("  Frame grab : FAILED")
             print("  Possible causes:")
             print("    • Stream is currently offline")
-            print("    • URL has expired (chunklist ID rotated — server restart may refresh it)")
+            print("    • URL has expired (chunklist ID rotated - server restart may refresh it)")
             print("    • Network / geo-restriction")
 
     print()
@@ -199,17 +199,17 @@ def main() -> None:
     print(f"  HLS streams     : {len(hls_cameras)}")
     print(f"  Validated       : {len(validated_cameras)}")
     print(f"  Mock / fallback : {len(mock_cameras)}")
-    print(f"  ffmpeg ready    : {'YES' if ffmpeg_ok else 'NO — install required'}")
-    print(f"  ffprobe ready   : {'YES' if ffprobe_ok else 'NO — install required'}")
+    print(f"  ffmpeg ready    : {'YES' if ffmpeg_ok else 'NO - install required'}")
+    print(f"  ffprobe ready   : {'YES' if ffprobe_ok else 'NO - install required'}")
     print()
 
     if hls_cameras and ffmpeg_ok:
         print("  System is ready to process live MYT Traffic Watch streams.")
     elif hls_cameras and not ffmpeg_ok:
         print("  HLS cameras discovered but ffmpeg is missing.")
-        print("  Install ffmpeg then restart the server — streams will be live.")
+        print("  Install ffmpeg then restart the server - streams will be live.")
     else:
-        print("  No HLS streams configured — server will use mock pipeline.")
+        print("  No HLS streams configured - server will use mock pipeline.")
 
     _divider("═")
     print()

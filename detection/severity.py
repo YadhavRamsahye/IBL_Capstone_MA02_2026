@@ -108,7 +108,7 @@ def classify(pcu: float, camera_id: str) -> tuple[str, str, float]:
     """Classify a PCU load for a specific camera.
 
     Returns ``(severity, colour, saturation)`` where saturation is the
-    PCU-to-capacity ratio — the value that is actually comparable between
+    PCU-to-capacity ratio - the value that is actually comparable between
     cameras, and worth storing alongside the raw count.
     """
     capacity = capacity_for(camera_id)
@@ -177,7 +177,7 @@ def classify_count(vehicle_count: int, camera_id: str) -> tuple[str, str, float]
     """Classify a raw vehicle count when per-class data is unavailable.
 
     Assumes an average mix of 1.0 PCU per vehicle. Prefer ``classify`` with real
-    PCU whenever the class IDs are to hand — this exists for the mock pipeline
+    PCU whenever the class IDs are to hand - this exists for the mock pipeline
     and for callers that only ever had a count.
     """
     return classify(float(vehicle_count), camera_id)

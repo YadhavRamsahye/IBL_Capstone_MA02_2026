@@ -1,0 +1,100 @@
+*   d20e300 (origin/Dev) Merge branch 'Yadhav_Incident_Detection_Aug2026' into Dev
+|\  
+| * 1de2471 (origin/Yadhav_Incident_Detection_Aug2026) fix(analytics): surface traffic_snapshots.is_incident instead of leaving it unread
+| * 74e57d2 fix(detection): recalibrate stationary_tracker against measured reality, not assumptions
+| * 700b02a feat(tools): add incident_harness.py and an admin demo endpoint to prove the chain
+| * 1d9a120 feat(incidents): wire stalled-vehicle detection into the incident pipeline
+* | 388c102 Merge branch 'Yadhav_Camera_Positions_Aug2026' into Dev
+|\| 
+| * ab58546 (origin/Yadhav_Camera_Positions_Aug2026) feat(tools): gate catalogue regeneration on the road-proximity validator
+| * da7b0ce fix(cameras): re-derive casernes/la_chaussee, geocode 5 more, drop fake ring placement
+| * a2689c2 feat(tools): add validate_camera_coords.py - a check that can actually fail
+* | 4b2c484 Merge branch 'Yadhav_Map_Accuracy_Aug2026' into Dev
+|\| 
+| * 89069d7 (origin/Yadhav_Map_Accuracy_Aug2026) fix(cameras): correct two catalogued positions, audit the rest
+| * 3034feb fix(map): scope MJPEG to the popup, event-driven streaming, layout fixes
+| * 8db45e6 fix(auth): stop advertising and defaulting-on the demo login backdoor
+* | cd95033 Merge branch 'Yadhav_Live_Camera_View_Aug2026' into Dev
+|\| 
+| * 9132acb (origin/Yadhav_Live_Camera_View_Aug2026) feat(map): replace polled camera thumbnails with live MJPEG streaming
+| * 9ce2317 feat(map): add a camera overview strip below the map
+| * 8184658 feat(map): show the live annotated camera frame in each popup
+* | 13356af Merge branch 'Yadhav_Fixes_Aug2026' into Dev
+|\| 
+| * bec3a54 (origin/Yadhav_Fixes_Aug2026) feat(camera): capture annotated frames and serve them via the API
+| * 213d96a fix(logging): make "[db] Engine ready" actually appear in the log
+| * 37c25b5 fix(db): close the bottleneck-event/incident foreign-key race
+* | a83bcf2 Merge branch 'Yadhav_Recovery_And_Merge_Aug2026' into Dev
+|\| 
+| * 7f0b661 (origin/Yadhav_Recovery_And_Merge_Aug2026) docs(security): redact plaintext DB password from TECHNICAL_BRIEFING.md
+| * b7c0830 docs: replace Bitbucket onboarding boilerplate with a real README
+| * d286850 chore(repo): remove stray gitlink and dead backup files
+| * 1bdf0cd fix(repo): rewrite .gitignore as clean UTF-8
+| * 0af7535 fix(deps): deduplicate requirements.txt after merging sahil_tasksdone
+| *   529fe97 Merge branch 'Yadhav_Env_Sync_Aug2026' into Yadhav_Recovery_And_Merge_Aug2026
+| |\  
+| | * 009f229 (origin/Yadhav_Env_Sync_Aug2026) chore(deps): add sqlalchemy, asyncpg and bcrypt to requirements
+| |/  
+|/|   
+| *   ef01921 Merge remote-tracking branch 'origin/sahil_tasksdone' into Yadhav_Recovery_And_Merge_Aug2026
+| |\  
+| | * 3b7838e (HEAD -> sahil_tasksdone, origin/sahil_tasksdone, all/sahil_tasksdone) Expand to all 38 MYT cameras, add Gemini provider, fix persistence bugs
+| | * c2832af (origin/fix/audit-remediation, fix/audit-remediation) final chages for yadav to review.
+| | * 4a512fb Adopt upstream's API kill switch into the merged Claude client
+| | *   78d160c Merge origin/main into fix/audit-remediation
+| | |\  
+| | * | 2b9df35 Fix security, bias and data-integrity issues found in codebase audit
+| | * | 9a548f5 (main) test
+| | * | e1a96a9 LS
+| * | | f548fa0 docs: restore TECHNICAL_BRIEFING.md deleted in 5434f0a
+|/ / /  
+* | |   fac88ed (origin/main, origin/HEAD) Merge branch 'main' of https://github.com/YadhavRamsahye/IBL_Capstone_MA02_2026
+|\ \ \  
+| | |/  
+| |/|   
+* | | e9aa386 Yadhav take over next phase after Sahil
+| | | * 5544c26 (origin/Whitney_Testing) Fix application behavior test suite
+| | | * fc15099 Add vehicle detection and bottleneck analysis tests
+| | | * 80e1957 Add resilience tests for failure recovery
+| | | * 903891e Add regression tests to prevent fixed bugs
+| | | * 4dfc221 Add integration tests for system components
+| | | * 4d58e36 Add concurrency tests for simultaneous processing
+| | | * 54eff2b Add smoke tests for core application startup
+| | | * 80ebe6b Add Playwright end-to-end tests and application behavior test suite
+| | |/  
+| |/|   
+| * |   6620d00 (origin/Mokshan_Testing, origin/Jehan_Testing) Merge branch 'main' of https://bitbucket.org/curtincomputingprojects/ma02_2026
+| |\ \  
+| | * | c0e803a Initial commit
+| |  /  
+| * |   857fe36 Merge: resolved conflict in claude_api.py
+| |\ \  
+| | * | cd62ef5 Futher Polish of main.py and claude api fixes
+| |/ /  
+|/| |   
+* | | 1b8d8e1 Polishing main.py and adding main copy.py for backup. The main.py file has been modified to include new features and improvements, while main copy.py serves as a backup in case any issues arise with the changes made to main.py. Both files are now ready for review and commit.
+| |/  
+|/|   
+| * 5434f0a Add team attribution comments to backend and frontend
+|/  
+* 9144380 Incident detection final commit
+* 885bd70 final changes
+* dac077b linking
+* 2e1c3fd (origin/moshan's-part) chore: remove pycache from version control
+* a97d04a feat: enhance test dashboard with AI summaries and dynamic camera discovery
+* 2e724d5 feat: add Claude API integration for AI-generated traffic summaries
+* f54a384 (origin/WebSocket) Added database table script
+*   89b2ff8 Merge branch 'YadhavRamsahye:main' into main
+|\  
+| * 73ebf4d Scraping part done.
+| * a28e25e Mock pipeline implemented.
+| * 4cfce0f AI pipeline and n8n automation script.
+* | cddb37b UI Heat Map Update
+|/  
+*   d6f27de Merge branch 'main' of https://github.com/YadhavRamsahye/IBL_Capstone_MA02_2026
+|\  
+| * 3c9ec80 test 2
+| * 66294f8 Test to Readme
+* | 294e92c First Frontend For Project.
+|/  
+* b809b55 (origin/Testing_repo_Branch) Initial commit
