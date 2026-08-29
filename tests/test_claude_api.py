@@ -115,8 +115,16 @@ def test_template_fallback() -> None:
 async def test_service_fallback() -> None:
     divider("TEST 3: TrafficSummaryService - Fallback Mode")
 
-    # Force fallback by temporarily unsetting the API key.
-    original_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+    # Force the template backend via the same kill switch main.py exposes
+    # (CLAUDE_API_DISABLED=1), regardless of which provider/key .env has
+    # configured. Popping only ANTHROPIC_API_KEY was not enough once
+    # SUMMARY_PROVIDER could be "gemini": with a live GEMINI_API_KEY still in
+    # the environment this made a real Gemini call here and then failed its
+    # own "must be template_fallback" assertion below.
+    from detection import providers
+    original_disabled = os.environ.get("CLAUDE_API_DISABLED")
+    os.environ["CLAUDE_API_DISABLED"] = "1"
+    providers.reset_clients()
 
     try:
         service = TrafficSummaryService()
@@ -137,9 +145,11 @@ async def test_service_fallback() -> None:
         print("[PASS] Caching works - cached summary retrieved for port_louis")
 
     finally:
-        # Restore the key if it was set.
-        if original_key:
-            os.environ["ANTHROPIC_API_KEY"] = original_key
+        if original_disabled is None:
+            os.environ.pop("CLAUDE_API_DISABLED", None)
+        else:
+            os.environ["CLAUDE_API_DISABLED"] = original_disabled
+        providers.reset_clients()
 
 
 # ── Test 4: Live Claude API call (only if key is set) ────────────────────
@@ -156,40 +166,55 @@ async def test_live_api() -> None:
 
     print("  API key detected - making a live Claude API call...\n")
 
-    # Use a fresh service instance so the client is created with the key.
-    from detection.claude_api import summary_service as _discard  # noqa
-    import detection.claude_api as mod
-    mod._client = None  # reset so it picks up the current env key
+    # Force the anthropic backend for this probe regardless of the .env
+    # default (SUMMARY_PROVIDER=template) — otherwise generate_summary()
+    # short-circuits to the template fallback before ever touching the key
+    # this test just checked for, and the [PASS]/[WARN] below would be
+    # judging nothing.
+    from detection import providers
+    original_provider = os.environ.get("SUMMARY_PROVIDER")
+    os.environ["SUMMARY_PROVIDER"] = "anthropic"
+    providers.reset_clients()  # drop any cached client from an earlier run
 
-    service = TrafficSummaryService()
+    try:
+        service = TrafficSummaryService()
 
-    # Test with a heavy-severity detection (most interesting output).
-    heavy_detection = SAMPLE_DETECTIONS[2]  # caudan, heavy
-    result = await service.generate_summary(heavy_detection)
+        # Test with a heavy-severity detection (most interesting output).
+        heavy_detection = SAMPLE_DETECTIONS[2]  # caudan, heavy
+        result = await service.generate_summary(heavy_detection)
 
-    print(f"  Camera:   {result.camera_id}")
-    print(f"  Severity: {result.severity}")
-    print(f"  Vehicles: {result.vehicle_count}")
-    print(f"  Source:   {result.source}")
-    print(f"  Summary:  {result.summary}")
-    print()
+        print(f"  Camera:   {result.camera_id}")
+        print(f"  Severity: {result.severity}")
+        print(f"  Vehicles: {result.vehicle_count}")
+        print(f"  Source:   {result.source}")
+        print(f"  Summary:  {result.summary}")
+        print()
 
-    if result.source == "claude_api":
-        print("[PASS] Live Claude API call succeeded!")
-    else:
-        print("[WARN] Fell back to template - check your API key and network.")
+        # source is the provider name that actually answered ("anthropic"),
+        # not the literal string "claude_api" — that never occurs since
+        # detection/providers.py made the backend configurable.
+        if result.source == providers.ANTHROPIC:
+            print("[PASS] Live Claude API call succeeded!")
+        else:
+            print("[WARN] Fell back to template — check your API key and network.")
 
-    # Also test alert description generation.
-    print("\n  Generating alert description...\n")
-    alert_result = await service.generate_alert_description(heavy_detection)
-    print(f"  Alert source:  {alert_result.source}")
-    print(f"  Alert message: {alert_result.summary}")
-    print()
+        # Also test alert description generation.
+        print("\n  Generating alert description...\n")
+        alert_result = await service.generate_alert_description(heavy_detection)
+        print(f"  Alert source:  {alert_result.source}")
+        print(f"  Alert message: {alert_result.summary}")
+        print()
 
-    if alert_result.source == "claude_api":
-        print("[PASS] Live Claude API alert description succeeded!")
-    else:
-        print("[WARN] Alert fell back to template.")
+        if alert_result.source == providers.ANTHROPIC:
+            print("[PASS] Live Claude API alert description succeeded!")
+        else:
+            print("[WARN] Alert fell back to template.")
+    finally:
+        if original_provider is None:
+            os.environ.pop("SUMMARY_PROVIDER", None)
+        else:
+            os.environ["SUMMARY_PROVIDER"] = original_provider
+        providers.reset_clients()
 
 
 # ── Main ─────────────────────────────────────────────────────────────────

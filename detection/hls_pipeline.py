@@ -338,10 +338,19 @@ def _detect_loop(
         # Reuses the tracker's association, so no second pass over the boxes.
         # An uncalibrated camera yields a single "combined" direction, which is
         # identical to the previous behaviour.
-        by_direction = severity_mod.classify_directional(
-            camera_id, direction.classify(camera_id, tracker.visible_tracks())
-        )
+        grouped_tracks = direction.classify(camera_id, tracker.visible_tracks())
+        by_direction = severity_mod.classify_directional(camera_id, grouped_tracks)
         if direction.is_two_way(camera_id):
+            # Per-direction stalled-traffic verdict, same thresholds as the
+            # whole-frame `verdict` above, just scoped to each direction's own
+            # tracks — a lane stopped dead next to a flowing one would
+            # otherwise dilute below MIN_STATIONARY_FRACTION and never report
+            # anything at the whole-frame level. See stationary_tracker.py.
+            # main.py passes this straight through to IncidentDetector.analyze
+            # as that direction's stall_verdict, alongside the whole-camera one.
+            for label, tracks in grouped_tracks.items():
+                by_direction[label].update(tracker.verdict_for(tracks).to_dict())
+
             # Headline severity is the worst direction: a road with one side
             # gridlocked must not read as "moderate" because the other side is
             # clear. The aggregate count stays whole-frame.

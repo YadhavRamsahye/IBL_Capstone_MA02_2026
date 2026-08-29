@@ -248,20 +248,30 @@ def _template_summary(data: DetectionData) -> str:
 
     # Name the affected direction rather than the whole road: "heavy
     # northbound" is actionable where "heavy" alone tells a southbound driver
-    # nothing useful.
+    # nothing useful. A direction the StationaryTracker has confirmed stalled
+    # (see hls_pipeline._detect_loop) is named as blocked outright rather than
+    # folded into "heavy" — "blocked" and "heavy but still moving" call for
+    # different driver decisions, and only the tracker's persistence check can
+    # tell them apart.
     directional = ""
     if data.directions and set(data.directions) != {"combined"}:
+        blocked = [
+            f"{label} is blocked (stalled ~{d.get('stalled_seconds', 0) / 60:.0f}m)"
+            for label, d in sorted(data.directions.items())
+            if d.get("is_incident")
+        ]
         busy = [
             f"{label} is {d.get('severity')}"
             for label, d in sorted(data.directions.items())
-            if d.get("severity") in ("heavy", "bottleneck")
+            if d.get("severity") in ("heavy", "bottleneck") and not d.get("is_incident")
         ]
         clear = [
             label for label, d in sorted(data.directions.items())
-            if d.get("severity") in ("free", "moderate")
+            if d.get("severity") in ("free", "moderate") and not d.get("is_incident")
         ]
-        if busy:
-            directional = " " + ", ".join(busy).capitalize() + "."
+        parts = blocked + busy
+        if parts:
+            directional = " " + ", ".join(parts).capitalize() + "."
             if clear:
                 directional += f" {' and '.join(clear).capitalize()} is flowing."
 
@@ -317,8 +327,23 @@ _SYSTEM_PROMPT: str = (
     "traffic summaries.\n"
     "- Two sentences maximum. No preamble, markdown, or timestamps.\n"
     "- State location, vehicle count, and severity.\n"
-    "- If a detour is supplied, rephrase that one. Never invent a road name."
+    "- If a detour is supplied, rephrase that one. Never invent a road name.\n"
+    "- If a direction is marked BLOCKED, name that direction explicitly — do "
+    "not describe it merely as heavy or congested."
 )
+
+
+def _direction_fact(label: str, d: dict) -> str:
+    """One per-direction fact line for the model prompt.
+
+    Distinguishes a StationaryTracker-confirmed stall from ordinary "heavy"
+    severity — the model can only pass the distinction along if it is told,
+    since `severity` alone conflates "slow but moving" with "stopped".
+    """
+    if d.get("is_incident"):
+        return (f"{label} BLOCKED, stalled {d.get('stalled_seconds', 0):.0f}s "
+                f"({d.get('vehicle_count', 0)} vehicles)")
+    return f"{label} {d.get('severity', '?')} ({d.get('vehicle_count', 0)} vehicles)"
 
 
 async def _call_model(data: DetectionData, prompt_type: str = "summary") -> str:
@@ -355,8 +380,7 @@ async def _call_model(data: DetectionData, prompt_type: str = "summary") -> str:
     per_direction = ""
     if data.directions and set(data.directions) != {"combined"}:
         rows = ", ".join(
-            f"{label} {d.get('severity', '?')} ({d.get('vehicle_count', 0)} vehicles)"
-            for label, d in sorted(data.directions.items())
+            _direction_fact(label, d) for label, d in sorted(data.directions.items())
         )
         per_direction = f"\nBy direction: {rows}"
 

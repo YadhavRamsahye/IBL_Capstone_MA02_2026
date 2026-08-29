@@ -285,9 +285,9 @@ async def _save_incident(inc) -> None:
             await db.execute(text("""
                 INSERT INTO incidents
                     (id, camera_id, type, severity, confidence, vehicle_count,
-                     detected_at, description)
+                     detected_at, description, detail)
                 VALUES (:id, :camera_id, :type, :severity, :confidence,
-                        :vehicle_count, :detected_at, :description)
+                        :vehicle_count, :detected_at, :description, CAST(:detail AS jsonb))
                 ON CONFLICT (id) DO NOTHING
             """), {
                 "id":            inc.incident_id,
@@ -301,6 +301,15 @@ async def _save_incident(inc) -> None:
                 # The other two save helpers use SQL NOW() and so were unaffected.
                 "detected_at":   _as_datetime(inc.timestamp),
                 "description":   inc.description,
+                # inc.camera_id is always the real camera id (never a
+                # direction-scoped state_key — see IncidentDetector.analyze),
+                # so the FK to cameras(id) is safe; the direction itself rides
+                # in this previously-unused JSONB column instead. CAST(...),
+                # not a :detail::jsonb suffix - SQLAlchemy's text() bindparam
+                # regex doesn't match a name immediately followed by `::`
+                # (kept for raw casts to pass through), so that form silently
+                # left the literal ":detail::jsonb" in the compiled SQL.
+                "detail":        json.dumps({"direction": inc.direction}) if inc.direction else None,
             })
             await db.commit()
     except SQLAlchemyError as exc:
@@ -330,6 +339,25 @@ async def _process_detection(camera_id: str, result: dict) -> None:
         severity      = result["severity"],
         stall_verdict = result.get("incident_detail"),
     )
+
+    # Same rule engine, run independently per direction of a calibrated
+    # two-way camera — a jammed northbound must not be diluted by a flowing
+    # southbound in the combined series the call above sees. Each direction's
+    # own stall_verdict (from hls_pipeline's per-direction tracker.verdict_for
+    # call) drives _check_stalled_vehicle the same way the whole-camera one
+    # does above. No-op for uncalibrated cameras (result["directions"] is
+    # then absent or {"combined": ...}).
+    if direction.is_two_way(camera_id):
+        for label, d in (result.get("directions") or {}).items():
+            new_incidents += incident_detector.analyze(
+                camera_id     = camera_id,
+                vehicle_count = d.get("vehicle_count", 0),
+                severity      = d.get("severity", "free"),
+                stall_verdict = d,
+                state_key     = f"{camera_id}::{label}",
+                direction     = label,
+            )
+
     if new_incidents:
         logger.info(
             "[%s] %d new incident(s) detected: %s",
@@ -726,6 +754,12 @@ def _username(user) -> str:
     return user.get("username") if isinstance(user, dict) else str(user)
 
 
+def _is_admin(user) -> bool:
+    """Same session shape as require_admin's check; an older bare-string
+    cookie has no role, so it's treated as non-admin rather than guessed."""
+    return isinstance(user, dict) and user.get("role") == "admin"
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     user = get_current_user(request)
@@ -814,7 +848,8 @@ async def map_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse(
-        "map.html", {"request": request, "user": _username(user)}
+        "map.html",
+        {"request": request, "user": _username(user), "is_admin": _is_admin(user)},
     )
 
 
