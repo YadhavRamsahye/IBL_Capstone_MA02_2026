@@ -751,6 +751,12 @@ def _username(user) -> str:
     return user.get("username") if isinstance(user, dict) else str(user)
 
 
+def _is_admin(user) -> bool:
+    """Same session shape as require_admin's check; an older bare-string
+    cookie has no role, so it's treated as non-admin rather than guessed."""
+    return isinstance(user, dict) and user.get("role") == "admin"
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     user = get_current_user(request)
@@ -829,7 +835,8 @@ async def map_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse(
-        "map.html", {"request": request, "user": _username(user)}
+        "map.html",
+        {"request": request, "user": _username(user), "is_admin": _is_admin(user)},
     )
 
 
