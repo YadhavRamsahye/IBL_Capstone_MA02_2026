@@ -60,11 +60,24 @@ Module   : Dashboard UI / Templates
             background: rgba(35,197,94,.1); border: 1px solid rgba(35,197,94,.3);
             color: #23c55e; padding: 4px 12px; border-radius: 20px;
             font-size: 12px; font-weight: 500;
+            transition: background .2s, border-color .2s, color .2s;
         }
         .status-dot {
             width: 6px; height: 6px; background: #23c55e;
             border-radius: 50%; animation: blink 2s infinite; flex-shrink: 0;
+            transition: background .2s;
         }
+        /* Reflect the real WebSocket connection state (see connectWS()) —
+           this used to be static markup that always said "Online" regardless
+           of whether the socket was actually up. */
+        .status-badge.reconnecting {
+            background: rgba(240,136,62,.1); border-color: rgba(240,136,62,.3); color: #f0883e;
+        }
+        .status-badge.reconnecting .status-dot { background: #f0883e; animation: blink 1s infinite; }
+        .status-badge.offline {
+            background: rgba(233,69,96,.1); border-color: rgba(233,69,96,.3); color: #e94560;
+        }
+        .status-badge.offline .status-dot { background: #e94560; animation: none; }
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
 
         .user-info { color: rgba(230,237,243,.6); font-size: 13px; white-space: nowrap; }
@@ -435,9 +448,9 @@ Module   : Dashboard UI / Templates
         </h1>
     </div>
     <div class="navbar-right">
-        <div class="status-badge">
+        <div class="status-badge" id="statusBadge">
             <div class="status-dot"></div>
-            <span class="status-text" id="systemStatus">System Online</span>
+            <span class="status-text" id="systemStatus">Connecting…</span>
         </div>
         <div class="user-info">Logged in as <strong>{{ user }}</strong></div>
         <a href="/analytics" class="nav-analytics" style="color:#58a6ff;font-size:13px;text-decoration:none;white-space:nowrap;">📊 Analytics</a>
@@ -1382,13 +1395,46 @@ async function triggerDemo() {
 }
 
 // ── WebSocket live traffic ────────────────────────────────────────────────────
-const wsUrl = `ws://${window.location.host}/ws/detections`;
+// wss:// when the page itself is HTTPS (main.py serves TLS when cert.pem/
+// key.pem are present) — a browser blocks a plain ws:// socket as mixed
+// content from an https:// page, which would otherwise silently kill live
+// updates on any TLS deployment.
+const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const wsUrl = `${wsProtocol}://${window.location.host}/ws/detections`;
 let _ws = null;
+
+// The status badge used to be static markup that always said "System
+// Online" no matter what the socket was actually doing. This reflects the
+// real connection state instead.
+function setSystemStatus(state) {
+    const badge = document.getElementById('statusBadge');
+    const text  = document.getElementById('systemStatus');
+    if (!badge || !text) return;
+    badge.classList.remove('reconnecting', 'offline');
+    if (state === 'online') {
+        text.textContent = 'System Online';
+    } else if (state === 'reconnecting') {
+        badge.classList.add('reconnecting');
+        text.textContent = 'Reconnecting…';
+    } else {
+        badge.classList.add('offline');
+        text.textContent = 'Connection Lost';
+    }
+}
+
+let _wsFailures = 0;   // consecutive closes without an intervening open
 
 function connectWS() {
     _ws = new WebSocket(wsUrl);
+    _ws.onopen    = () => { _wsFailures = 0; setSystemStatus('online'); };
     _ws.onmessage = e => { try { applyTrafficData(JSON.parse(e.data)); } catch (_) {} };
-    _ws.onclose   = () => setTimeout(connectWS, 3000);
+    _ws.onclose   = () => {
+        _wsFailures++;
+        // A handful of quick retries is normal on page load / a brief blip;
+        // past that it reads as actually down rather than "still connecting".
+        setSystemStatus(_wsFailures >= 3 ? 'offline' : 'reconnecting');
+        setTimeout(connectWS, 3000);
+    };
     _ws.onerror   = () => _ws.close();
 }
 
