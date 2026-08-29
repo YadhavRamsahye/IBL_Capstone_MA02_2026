@@ -64,8 +64,9 @@ _CAMERA_DISPLAY: dict[str, str] = {
 }
 
 
-def _display(camera_id: str) -> str:
-    return _CAMERA_DISPLAY.get(camera_id, camera_id.replace("_", " ").title())
+def _display(camera_id: str, direction: Optional[str] = None) -> str:
+    base = _CAMERA_DISPLAY.get(camera_id, camera_id.replace("_", " ").title())
+    return f"{base} ({direction})" if direction else base
 
 
 # ── Internal data types ───────────────────────────────────────────────────────
@@ -96,6 +97,10 @@ class Incident:
     color:         str
     resolved:      bool = False
     resolved_at:   Optional[str] = None
+    # Which side of a calibrated two-way camera this incident belongs to
+    # (e.g. "northbound"), or None for a whole-camera incident / an
+    # uncalibrated camera. See detection/direction.py.
+    direction:     Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -111,6 +116,7 @@ class Incident:
             "color":         self.color,
             "resolved":      self.resolved,
             "resolved_at":   self.resolved_at,
+            "direction":     self.direction,
         }
 
 
@@ -125,17 +131,20 @@ class IncidentDetector:
     """
 
     def __init__(self) -> None:
-        # camera_id → deque of _Reading
+        # state_key → deque of _Reading. state_key is camera_id for a
+        # whole-camera series, or "camera_id::direction" for one direction of
+        # a calibrated two-way camera — kept separate so a jammed direction's
+        # history isn't averaged together with a flowing one. See analyze().
         self._history: dict[str, deque[_Reading]] = {}
-        # camera_id → {incident_type: Incident}  (only open/unresolved)
+        # state_key → {incident_type: Incident}  (only open/unresolved)
         self._open: dict[str, dict[str, Incident]] = {}
         # Chronological ring buffer of raised incidents. Bounded because this
         # was an unbounded list that grew for the lifetime of the process;
         # durable history now lives in the `incidents` table instead.
         self._log: deque[Incident] = deque(maxlen=LOG_MAX)
-        # camera_id → consecutive zero-count readings during night hours
+        # state_key → consecutive zero-count readings during night hours
         self._night_zero_streak: dict[str, int] = {}
-        # camera_id → {incident_type: consecutive readings the candidate held}
+        # state_key → {incident_type: consecutive readings the candidate held}
         self._pending: dict[str, dict[str, int]] = {}
 
     # ── Public interface ──────────────────────────────────────────────────────
@@ -147,6 +156,8 @@ class IncidentDetector:
         severity: str,
         timestamp: Optional[datetime] = None,
         stall_verdict: Optional[dict] = None,
+        state_key: Optional[str] = None,
+        direction: Optional[str] = None,
     ) -> list[Incident]:
         """
         Process one detection reading and return any newly raised incidents.
@@ -157,16 +168,27 @@ class IncidentDetector:
         caller has one (the HLS pipeline does; the mock pipeline does not).
         This is the one route a confirmed stall takes into the ``incidents``
         table - see _check_stalled_vehicle.
+
+        ``state_key`` and ``direction`` let the same rule engine run
+        independently per direction of a calibrated two-way camera: pass a
+        composite key (e.g. "caudan_north::northbound") so that direction's
+        rolling history/open-incident state never mixes with the whole-camera
+        series or the opposite direction's, while ``camera_id`` on the
+        emitted Incident stays the real camera id (required by the
+        incidents.camera_id foreign key) and ``direction`` is folded into the
+        description/location text. Both default to the whole-camera call
+        this class always supported, so existing callers are unaffected.
         """
+        key = state_key or camera_id
         ts      = timestamp or datetime.now(timezone.utc)
         reading = _Reading(count=vehicle_count, severity=severity, timestamp=ts,
                            stall_verdict=stall_verdict)
 
-        if camera_id not in self._history:
-            self._history[camera_id] = deque(maxlen=HISTORY_SIZE)
-            self._open[camera_id]    = {}
+        if key not in self._history:
+            self._history[key] = deque(maxlen=HISTORY_SIZE)
+            self._open[key]    = {}
 
-        hist = self._history[camera_id]
+        hist = self._history[key]
         new: list[Incident] = []
 
         # Collect candidates first; nothing is reported on a single reading.
@@ -179,11 +201,11 @@ class IncidentDetector:
             self._check_night_low_visibility,
             self._check_stalled_vehicle,
         ):
-            inc = check(camera_id, reading, hist)
+            inc = check(camera_id, reading, hist, key, direction)
             if inc and inc.confidence >= MIN_CONFIDENCE:
                 candidates[inc.type] = inc
 
-        pending = self._pending.setdefault(camera_id, {})
+        pending = self._pending.setdefault(key, {})
         # A candidate that stops recurring is noise — drop its streak entirely
         # rather than letting it accumulate across unrelated episodes.
         for itype in list(pending):
@@ -194,24 +216,24 @@ class IncidentDetector:
             pending[itype] = pending.get(itype, 0) + 1
             if pending[itype] < CONFIRM_STREAK:
                 logger.debug(
-                    "[incident] candidate camera=%s type=%s (%d/%d readings)",
-                    camera_id, itype, pending[itype], CONFIRM_STREAK,
+                    "[incident] candidate state=%s type=%s (%d/%d readings)",
+                    key, itype, pending[itype], CONFIRM_STREAK,
                 )
                 continue
             del pending[itype]
             new.append(inc)
             self._log.append(inc)
-            self._open[camera_id][inc.type] = inc
+            self._open[key][inc.type] = inc
             logger.info(
-                "[incident] CONFIRMED  camera=%-14s type=%-22s sev=%-8s conf=%.2f count=%d",
-                camera_id, inc.type, inc.severity, inc.confidence, inc.vehicle_count,
+                "[incident] CONFIRMED  state=%-24s type=%-22s sev=%-8s conf=%.2f count=%d",
+                key, inc.type, inc.severity, inc.confidence, inc.vehicle_count,
             )
 
-        resolved = self._auto_resolve(camera_id, reading, ts)
+        resolved = self._auto_resolve(key, reading, ts)
         for inc in resolved:
             logger.info(
-                "[incident] RESOLVED  camera=%-14s type=%s  id=%s",
-                camera_id, inc.type, inc.incident_id[:8],
+                "[incident] RESOLVED  state=%-24s type=%s  id=%s",
+                key, inc.type, inc.incident_id[:8],
             )
 
         hist.append(reading)
@@ -279,8 +301,10 @@ class IncidentDetector:
         camera_id: str,
         r: _Reading,
         hist: deque[_Reading],
+        state_key: str,
+        direction: Optional[str] = None,
     ) -> Optional[Incident]:
-        if len(hist) < 3 or "sudden_congestion" in self._open.get(camera_id, {}):
+        if len(hist) < 3 or "sudden_congestion" in self._open.get(state_key, {}):
             return None
         # Measured against the rolling median, not the single previous reading.
         # An adjacent-reading comparison fires on YOLO count jitter and then
@@ -297,13 +321,14 @@ class IncidentDetector:
             iseverity     = severity,
             confidence    = confidence,
             vehicle_count = r.count,
+            direction     = direction,
             description   = (
                 # Reports the rolling-median baseline, not hist[-1]. The check
                 # was changed to measure against the median (so it survives
                 # confirmation across readings), but this text still quoted the
                 # previous reading — which by then equals the current one, so
                 # it read "jumped from 26 to 26 (+8)".
-                f"Sudden congestion at {_display(camera_id)}: vehicle count rose "
+                f"Sudden congestion at {_display(camera_id, direction)}: vehicle count rose "
                 f"to {r.count}, {spike:.0f} above the recent average of "
                 f"{baseline:.0f}. Possible accident or road obstruction ahead."
             ),
@@ -314,8 +339,10 @@ class IncidentDetector:
         camera_id: str,
         r: _Reading,
         hist: deque[_Reading],
+        state_key: str,
+        direction: Optional[str] = None,
     ) -> Optional[Incident]:
-        if "sustained_bottleneck" in self._open.get(camera_id, {}):
+        if "sustained_bottleneck" in self._open.get(state_key, {}):
             return None
         if r.severity != "bottleneck" or len(hist) < BOTTLENECK_STREAK - 1:
             return None
@@ -335,8 +362,9 @@ class IncidentDetector:
             iseverity     = severity,
             confidence    = confidence,
             vehicle_count = r.count,
+            direction     = direction,
             description   = (
-                f"Sustained bottleneck at {_display(camera_id)}: {r.count} vehicles "
+                f"Sustained bottleneck at {_display(camera_id, direction)}: {r.count} vehicles "
                 f"detected for {streak} consecutive cycles (~{streak * 2}+ seconds). "
                 f"Significant congestion is persisting."
             ),
@@ -347,8 +375,10 @@ class IncidentDetector:
         camera_id: str,
         r: _Reading,
         hist: deque[_Reading],
+        state_key: str,
+        direction: Optional[str] = None,
     ) -> Optional[Incident]:
-        if len(hist) < 3 or "road_blockage" in self._open.get(camera_id, {}):
+        if len(hist) < 3 or "road_blockage" in self._open.get(state_key, {}):
             return None
         # Baseline median rather than the previous reading: a single dropped or
         # mis-decoded frame reads as "count fell from 12 to 0", which is a
@@ -363,8 +393,9 @@ class IncidentDetector:
             iseverity     = "severe",
             confidence    = 0.82,
             vehicle_count = r.count,
+            direction     = direction,
             description   = (
-                f"Possible road blockage at {_display(camera_id)}: count dropped "
+                f"Possible road blockage at {_display(camera_id, direction)}: count dropped "
                 f"sharply from {prev} to {r.count}. Road may be blocked or emergency "
                 f"vehicles are clearing the area."
             ),
@@ -375,8 +406,10 @@ class IncidentDetector:
         camera_id: str,
         r: _Reading,
         hist: deque[_Reading],
+        state_key: str,
+        direction: Optional[str] = None,
     ) -> Optional[Incident]:
-        if "rapid_buildup" in self._open.get(camera_id, {}):
+        if "rapid_buildup" in self._open.get(state_key, {}):
             return None
         if len(hist) < BUILDUP_STREAK - 1 or r.severity not in ("heavy", "bottleneck"):
             return None
@@ -394,8 +427,9 @@ class IncidentDetector:
             iseverity     = "moderate",
             confidence    = confidence,
             vehicle_count = r.count,
+            direction     = direction,
             description   = (
-                f"Rapid traffic buildup at {_display(camera_id)}: vehicle count rose "
+                f"Rapid traffic buildup at {_display(camera_id, direction)}: vehicle count rose "
                 f"from {window[0].count} to {r.count} (+{total_rise}) over "
                 f"{BUILDUP_STREAK} consecutive readings. Congestion is actively worsening."
             ),
@@ -406,16 +440,18 @@ class IncidentDetector:
         camera_id: str,
         r: _Reading,
         hist: deque[_Reading],
+        state_key: str,
+        direction: Optional[str] = None,
     ) -> Optional[Incident]:
-        if "night_low_visibility" in self._open.get(camera_id, {}):
+        if "night_low_visibility" in self._open.get(state_key, {}):
             return None
         hour = datetime.now(timezone.utc).hour
         is_night = hour >= NIGHT_START_HOUR or hour < NIGHT_END_HOUR
         if not is_night or r.count > 0:
-            self._night_zero_streak[camera_id] = 0
+            self._night_zero_streak[state_key] = 0
             return None
-        streak = self._night_zero_streak.get(camera_id, 0) + 1
-        self._night_zero_streak[camera_id] = streak
+        streak = self._night_zero_streak.get(state_key, 0) + 1
+        self._night_zero_streak[state_key] = streak
         if streak < NIGHT_ZERO_STREAK:
             return None
         return self._make(
@@ -430,9 +466,10 @@ class IncidentDetector:
             # a baseline exists.
             confidence    = 0.65,
             vehicle_count = 0,
+            direction     = direction,
             description   = (
-                f"No vehicles detected at {_display(camera_id)} during active night hours "
-                f"({streak} consecutive zero readings). Possible camera obstruction or "
+                f"No vehicles detected at {_display(camera_id, direction)} during active night "
+                f"hours ({streak} consecutive zero readings). Possible camera obstruction or "
                 f"road closure."
             ),
         )
@@ -442,6 +479,8 @@ class IncidentDetector:
         camera_id: str,
         r: _Reading,
         hist: deque[_Reading],
+        state_key: str,
+        direction: Optional[str] = None,
     ) -> Optional[Incident]:
         """Raise when detection/stationary_tracker.py reports a confirmed stall.
 
@@ -451,8 +490,13 @@ class IncidentDetector:
         verdict should become a reported incident, through the same
         CONFIRM_STREAK/MIN_CONFIDENCE gates every other check here uses, so
         this camera's incident history lives in one place instead of two.
+
+        ``r.stall_verdict`` is whole-frame or per-direction depending on what
+        the caller passed to analyze() - hls_pipeline now produces both (see
+        _detect_loop), so a direction-scoped call here sees that direction's
+        own tracked vehicles only, not the combined-frame verdict.
         """
-        if "stalled_vehicle" in self._open.get(camera_id, {}):
+        if "stalled_vehicle" in self._open.get(state_key, {}):
             return None
         sv = r.stall_verdict
         if not sv or not sv.get("is_incident"):
@@ -463,8 +507,9 @@ class IncidentDetector:
             iseverity     = "severe",
             confidence    = sv.get("confidence", 0.0),
             vehicle_count = r.count,
+            direction     = direction,
             description   = (
-                f"Stalled traffic at {_display(camera_id)}: "
+                f"Stalled traffic at {_display(camera_id, direction)}: "
                 f"{sv.get('stationary_count', 0)} of {sv.get('total_tracked', 0)} "
                 f"tracked vehicles have not moved for "
                 f"{sv.get('stalled_seconds', 0):.0f}s. Possible accident or breakdown."
@@ -475,12 +520,12 @@ class IncidentDetector:
 
     def _auto_resolve(
         self,
-        camera_id: str,
+        state_key: str,
         r: _Reading,
         now: datetime,
     ) -> list[Incident]:
         resolved: list[Incident] = []
-        for itype, inc in list(self._open.get(camera_id, {}).items()):
+        for itype, inc in list(self._open.get(state_key, {}).items()):
             should = False
             if itype == "sudden_congestion":
                 should = r.severity in ("free", "moderate")
@@ -497,7 +542,7 @@ class IncidentDetector:
             if should:
                 inc.resolved    = True
                 inc.resolved_at = now.isoformat()
-                del self._open[camera_id][itype]
+                del self._open[state_key][itype]
                 resolved.append(inc)
         return resolved
 
@@ -511,6 +556,7 @@ class IncidentDetector:
         confidence: float,
         vehicle_count: int,
         description: str,
+        direction: Optional[str] = None,
     ) -> Incident:
         meta = _TYPE_META.get(itype, {"label": itype, "color": "#5a7a9a"})
         return Incident(
@@ -522,6 +568,7 @@ class IncidentDetector:
             vehicle_count = vehicle_count,
             timestamp     = datetime.now(timezone.utc).isoformat(),
             description   = description,
-            location      = _display(camera_id),
+            location      = _display(camera_id, direction),
             color         = meta["color"],
+            direction     = direction,
         )

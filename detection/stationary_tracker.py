@@ -202,19 +202,41 @@ class StationaryTracker:
 
     def update(self, boxes: list[list[float]],
                classes: list[int] | None = None) -> Verdict:
-        """Consume one frame's vehicle boxes and return the current verdict.
+        """Consume one frame's vehicle boxes and return the whole-frame verdict.
 
         `classes` are the matching COCO class ids, kept on each track so
         per-direction PCU can reuse this association.
         """
         self._associate(boxes, classes or [])
+        verdict = self._verdict_for_tracks(self.visible_tracks())
+        # Every early-return path inside _verdict_for_tracks corresponds to
+        # "not an incident", so this reduces to the same reset-on-no /
+        # increment-on-yes behaviour the inline version had.
+        self._confirmed_frames = self._confirmed_frames + 1 if verdict.is_incident else 0
+        return verdict
 
-        stationary = [t for t in self._tracks
-                      if t.stationary_frames >= self._frames_required
-                      and t.missed_frames == 0]
-        visible = [t for t in self._tracks if t.missed_frames == 0]
+    def verdict_for(self, tracks: list["_Track"]) -> Verdict:
+        """Verdict for an arbitrary subset of currently-visible tracks.
 
-        n_stat, n_vis = len(stationary), len(visible)
+        Applies the identical stalled-traffic thresholds as the whole-frame
+        verdict, just scoped smaller — e.g. one direction's tracks from
+        direction.classify(camera_id, tracker.visible_tracks()). This is what
+        lets a single blocked direction surface even when a flowing opposite
+        direction would dilute the whole-frame stalled fraction below
+        MIN_STATIONARY_FRACTION and hide it entirely.
+        """
+        return self._verdict_for_tracks(tracks)
+
+    def _verdict_for_tracks(self, tracks: list["_Track"]) -> Verdict:
+        """Core verdict math against a list of already-visible tracks.
+
+        Callers are responsible for having already filtered to
+        missed_frames == 0 (both `visible_tracks()` and direction.classify's
+        grouping do this), so no such filtering happens here.
+        """
+        stationary = [t for t in tracks if t.stationary_frames >= self._frames_required]
+
+        n_stat, n_vis = len(stationary), len(tracks)
         longest = max((t.stationary_frames for t in stationary), default=0)
         stalled_seconds = longest * self.frame_interval
         fraction = (n_stat / n_vis) if n_vis else 0.0
@@ -230,7 +252,6 @@ class StationaryTracker:
                 f"only {n_stat} vehicle(s) stalled >{STALL_SECONDS_REQUIRED:.0f}s "
                 f"(need {MIN_STATIONARY_VEHICLES})"
             )
-            self._confirmed_frames = 0
             return verdict
 
         if fraction < MIN_STATIONARY_FRACTION:
@@ -238,7 +259,6 @@ class StationaryTracker:
                 f"{fraction:.0%} of traffic stalled (need "
                 f"{MIN_STATIONARY_FRACTION:.0%}) — traffic still flowing"
             )
-            self._confirmed_frames = 0
             return verdict
 
         # Confidence grows with how far past the threshold the stall has gone
@@ -249,10 +269,8 @@ class StationaryTracker:
 
         if verdict.confidence < MIN_CONFIDENCE:
             verdict.reason = f"confidence {verdict.confidence:.2f} below {MIN_CONFIDENCE}"
-            self._confirmed_frames = 0
             return verdict
 
-        self._confirmed_frames += 1
         verdict.is_incident = True
         verdict.reason = (
             f"{n_stat} of {n_vis} vehicles stationary for "
