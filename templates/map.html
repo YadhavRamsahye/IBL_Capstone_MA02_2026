@@ -965,10 +965,54 @@ function cameraFrameHtml(id) {
 
 function startFramePolling(id) {   // name kept - called from popupopen/popupclose below
     connectStream(`popFrame_${id}`, `popFramePh_${id}`, `popFrameLive_${id}`, id);
+    startSummaryPolling(id);
 }
 
 function stopFramePolling(id) {
     disconnectStream(`popFrame_${id}`);
+    stopSummaryPolling(id);
+}
+
+// ── AI traffic summary ────────────────────────────────────────────────────────
+// GET /api/summary/{id} returns the same Claude/Gemini/template summary
+// detection/claude_api.py has generated all along - this was never fetched
+// or rendered anywhere in the UI, so the prose (including which direction is
+// blocked, on a calibrated camera) was invisible regardless of how good the
+// generated text was. Polled at a much slower cadence than the frame: the
+// backend regenerates a summary at most every _MIN_SUMMARY_INTERVAL (60s),
+// so anything faster just re-fetches the same cached string.
+const SUMMARY_POLL_MS = 10000;
+const summaryPollers = {};   // camera_id -> interval handle
+
+async function refreshSummary(id) {
+    const el = document.getElementById(`popSummary_${id}`);
+    if (!el) { stopSummaryPolling(id); return; }   // popup no longer in the DOM
+    try {
+        const res = await fetch(`${API_BASE}/api/summary/${id}`);
+        if (!res.ok) { el.style.display = 'none'; return; }
+        const data = await res.json();
+        if (data.summary) {
+            el.textContent = data.summary;
+            el.style.display = 'block';
+        } else {
+            el.style.display = 'none';
+        }
+    } catch (_) {
+        // Transient fetch failure - leave whatever was already shown rather
+        // than blanking a summary that was working a moment ago.
+    }
+}
+
+function startSummaryPolling(id) {
+    stopSummaryPolling(id);
+    refreshSummary(id);
+    summaryPollers[id] = setInterval(() => {
+        if (!document.hidden) refreshSummary(id);
+    }, SUMMARY_POLL_MS);
+}
+
+function stopSummaryPolling(id) {
+    if (summaryPollers[id]) { clearInterval(summaryPollers[id]); delete summaryPollers[id]; }
 }
 
 // ── Camera overview strip ─────────────────────────────────────────────────────
@@ -1066,6 +1110,7 @@ function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
             ${cameraFrameHtml(id)}
             <div id="popSev_${id}" style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
             <div id="popBadge_${id}">${incidentBadge}</div>
+            <div id="popSummary_${id}" style="display:none;margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;font-size:12px;color:#444;line-height:1.5;font-style:italic;"></div>
             <table style="font-size:12px;color:#555;width:100%;">
                 <tr><td>Vehicles</td><td><b id="popVeh_${id}">${det.vehicle_count}</b></td></tr>
                 <tr><td>Detection interval</td><td id="popFps_${id}">${detectionIntervalText(det.fps_processed)}</td></tr>
