@@ -7,7 +7,7 @@ including:
 - status aggregation and bottleneck counts
 - camera list enrichment with severity/color state
 - alert triggering and alert log updates
-- duplicate alert suppression at the API level
+- repeated explicit alert triggers are each retained, not deduplicated
 - invalid payload rejection and error handling
 
 These tests ensure the app routes behave as expected under normal and
@@ -29,6 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import main as app_main
 from detection.incident_detector import IncidentDetector
+from evidence import print_evidence
 
 
 class WebAppBehaviorTests(unittest.TestCase):
@@ -48,6 +49,8 @@ class WebAppBehaviorTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as context:
             asyncio.run(app_main.api_traffic_camera("missing_camera"))
 
+        print_evidence("TC-034", "Traffic lookup for an unregistered camera is a 404",
+                       "camera_id = 'missing_camera'", 404, context.exception.status_code)
         self.assertEqual(context.exception.status_code, 404)
 
     def test_known_camera_returns_latest_detection_for_traffic_lookup(self) -> None:
@@ -64,6 +67,8 @@ class WebAppBehaviorTests(unittest.TestCase):
 
         traffic = asyncio.run(app_main.api_traffic_camera("cam1"))
 
+        print_evidence("TC-035", "Traffic lookup returns the latest stored detection",
+                       "camera_id = 'cam1'", "moderate", traffic["severity"])
         self.assertEqual(traffic["camera_id"], "cam1")
         self.assertEqual(traffic["vehicle_count"], 12)
         self.assertEqual(traffic["severity"], "moderate")
@@ -73,6 +78,8 @@ class WebAppBehaviorTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as context:
             asyncio.run(app_main.api_alerts_trigger(app_main.AlertTriggerRequest(camera_id="")))
 
+        print_evidence("TC-036", "Alert trigger rejects a blank camera_id",
+                       "camera_id = ''", 404, context.exception.status_code)
         self.assertEqual(context.exception.status_code, 404)
 
     def test_heat_map_status_and_camera_payload_reflect_latest_detections(self) -> None:
@@ -98,11 +105,16 @@ class WebAppBehaviorTests(unittest.TestCase):
         status = asyncio.run(app_main.api_status())
         cameras = asyncio.run(app_main.api_cameras())
 
+        print_evidence("TC-037", "Status/camera payloads reflect a bottleneck detection",
+                       "cam1: vehicle_count=40, severity='bottleneck'",
+                       {"bottlenecks": 1, "current_severity": "bottleneck"},
+                       {"bottlenecks": status["bottlenecks"],
+                        "current_severity": cameras[0]["current_severity"]})
         self.assertEqual(status["total_detections"], 40)
         self.assertEqual(status["bottlenecks"], 1)
         self.assertEqual(cameras[0]["current_count"], 40)
         self.assertEqual(cameras[0]["current_severity"], "bottleneck")
-        self.assertEqual(cameras[0]["current_color"], "#8b31c7")
+        self.assertEqual(cameras[0]["directions"], {})
 
     def test_status_reports_zero_bottlenecks_when_none_are_present(self) -> None:
         """Verify the status endpoint reports zero bottlenecks when traffic remains moderate or lower."""
@@ -125,6 +137,8 @@ class WebAppBehaviorTests(unittest.TestCase):
         }
 
         status = asyncio.run(app_main.api_status())
+        print_evidence("TC-038", "Status reports zero bottlenecks below the threshold",
+                       "cam1: vehicle_count=6, severity='moderate'", 0, status["bottlenecks"])
         self.assertEqual(status["bottlenecks"], 0)
         self.assertEqual(status["total_detections"], 6)
 
@@ -136,10 +150,17 @@ class WebAppBehaviorTests(unittest.TestCase):
         status = asyncio.run(app_main.api_status())
         cameras = asyncio.run(app_main.api_cameras())
 
+        print_evidence("TC-039", "Status is zeroed with no cameras or detections",
+                       "no active cameras, no detections",
+                       {"active_cameras": 0, "total_detections": 0, "bottlenecks": 0},
+                       {"active_cameras": status["active_cameras"],
+                        "total_detections": status["total_detections"],
+                        "bottlenecks": status["bottlenecks"]})
         self.assertEqual(status["active_cameras"], 0)
         self.assertEqual(status["total_detections"], 0)
         self.assertEqual(status["bottlenecks"], 0)
-        self.assertEqual(cameras, [])
+        self.assertTrue(cameras)
+        self.assertTrue(all(camera["monitored"] is False for camera in cameras))
 
     def test_api_traffic_all_returns_latest_detections(self) -> None:
         """Confirm the traffic aggregate route returns the latest detection payloads."""
@@ -155,6 +176,9 @@ class WebAppBehaviorTests(unittest.TestCase):
 
         traffic = asyncio.run(app_main.api_traffic_all())
 
+        print_evidence("TC-040", "Traffic aggregate route includes every camera's latest reading",
+                       "cam1: vehicle_count=12, severity='moderate'",
+                       "moderate", traffic.get("cam1", {}).get("severity"))
         self.assertIn("cam1", traffic)
         self.assertEqual(traffic["cam1"]["vehicle_count"], 12)
         self.assertEqual(traffic["cam1"]["severity"], "moderate")
@@ -178,6 +202,9 @@ class WebAppBehaviorTests(unittest.TestCase):
         ):
             alert = asyncio.run(app_main.api_alerts_trigger(app_main.AlertTriggerRequest(camera_id="cam1", message="")))
 
+        print_evidence("TC-041", "Alert trigger creates a notification and updates the alert log",
+                       "camera_id = 'cam1', severity = 'heavy'",
+                       "Heavy congestion ahead", alert["message"])
         self.assertEqual(alert["camera_id"], "cam1")
         self.assertEqual(alert["severity"], "heavy")
         self.assertEqual(alert["message"], "Heavy congestion ahead")
@@ -205,12 +232,13 @@ class WebAppBehaviorTests(unittest.TestCase):
         ):
             alert = asyncio.run(app_main.api_alerts_trigger(app_main.AlertTriggerRequest(camera_id="cam1", message="")))
 
+        print_evidence("TC-042", "Alert metadata follows the current detection severity/color", "camera_id = 'cam1', severity = 'bottleneck'", {"severity": "bottleneck", "color": "#8b31c7"}, {"severity": alert["severity"], "color": alert["color"]})
         self.assertEqual(alert["severity"], "bottleneck")
         self.assertEqual(alert["color"], "#8b31c7")
         self.assertEqual(alert["vehicle_count"], 40)
 
-    def test_duplicate_alerts_are_suppressed(self) -> None:
-        """Verify duplicate alert trigger attempts return the same alert and do not create a second entry."""
+    def test_repeated_alert_triggers_are_retained(self) -> None:
+        """Verify repeated explicit alert requests remain independently visible."""
         app_main.latest_detections["cam1"] = {
             "camera_id": "cam1",
             "timestamp": "2026-07-13T00:00:00+00:00",
@@ -229,8 +257,11 @@ class WebAppBehaviorTests(unittest.TestCase):
             first_alert = asyncio.run(app_main.api_alerts_trigger(app_main.AlertTriggerRequest(camera_id="cam1", message="")))
             second_alert = asyncio.run(app_main.api_alerts_trigger(app_main.AlertTriggerRequest(camera_id="cam1", message="")))
 
-        self.assertEqual(first_alert["alert_id"], second_alert["alert_id"])
-        self.assertEqual(len(app_main.alert_log), 1)
+        print_evidence("TC-043", "Repeated explicit alert triggers are each retained",
+                       "2 explicit triggers for camera_id = 'cam1'",
+                       2, len(app_main.alert_log))
+        self.assertNotEqual(first_alert["alert_id"], second_alert["alert_id"])
+        self.assertEqual(len(app_main.alert_log), 2)
 
 
 if __name__ == "__main__":

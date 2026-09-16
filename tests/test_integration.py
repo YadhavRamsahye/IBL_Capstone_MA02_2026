@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import main as app_main
+from evidence import print_api_evidence
 
 
 class IntegrationWorkflowTests(unittest.TestCase):
@@ -67,53 +68,77 @@ class IntegrationWorkflowTests(unittest.TestCase):
             "generate_alert_description",
             new=AsyncMock(return_value=SimpleNamespace(summary="Heavy congestion ahead", source="template_fallback")),
         ):
-            with TestClient(app_main.app) as client:
-                status = client.get("/api/status")
-                self.assertEqual(status.status_code, 200)
-                status_payload = status.json()
-                self.assertEqual(status_payload["active_cameras"], 0)
-                self.assertEqual(status_payload["total_detections"], 0)
-                self.assertEqual(status_payload["bottlenecks"], 0)
+            app_main.app.dependency_overrides[app_main.require_user] = lambda: {
+                "username": "test", "role": "admin", "id": "test",
+            }
+            try:
+                with TestClient(app_main.app) as client:
+                    status = client.get("/api/status")
+                    print_api_evidence("TC-050", "Startup status reflects a clean workflow start",
+                                       method="GET", path="/api/status",
+                                       expected_status=200, response=status)
+                    self.assertEqual(status.status_code, 200)
+                    status_payload = status.json()
+                    self.assertEqual(status_payload["active_cameras"], 0)
+                    self.assertEqual(status_payload["total_detections"], 0)
+                    self.assertEqual(status_payload["bottlenecks"], 0)
 
-                cameras = client.get("/api/cameras")
-                self.assertEqual(cameras.status_code, 200)
-                cameras_payload = cameras.json()
-                self.assertEqual(len(cameras_payload), 2)
-                self.assertEqual(cameras_payload[0]["camera_id"], "caudan_north")
+                    cameras = client.get("/api/cameras?include_catalogue=false")
+                    print_api_evidence("TC-051", "Discovered cameras are listed",
+                                       method="GET", path="/api/cameras?include_catalogue=false",
+                                       expected_status=200, response=cameras)
+                    self.assertEqual(cameras.status_code, 200)
+                    cameras_payload = cameras.json()
+                    self.assertEqual(len(cameras_payload), 2)
+                    self.assertEqual(cameras_payload[0]["camera_id"], "caudan_north")
 
-                app_main.latest_detections["caudan_north"] = {
-                    "camera_id": "caudan_north",
-                    "timestamp": "2026-07-15T00:00:00+00:00",
-                    "vehicle_count": 22,
-                    "severity": "heavy",
-                    "color": "#e94560",
-                    "fps_processed": 1.0,
-                    "frame_shape": [720, 1280],
-                }
+                    app_main.latest_detections["caudan_north"] = {
+                        "camera_id": "caudan_north",
+                        "timestamp": "2026-07-15T00:00:00+00:00",
+                        "vehicle_count": 22,
+                        "severity": "heavy",
+                        "color": "#e94560",
+                        "fps_processed": 1.0,
+                        "frame_shape": [720, 1280],
+                    }
 
-                traffic = client.get("/api/traffic/caudan_north")
-                self.assertEqual(traffic.status_code, 200)
-                traffic_payload = traffic.json()
-                self.assertEqual(traffic_payload["camera_id"], "caudan_north")
-                self.assertEqual(traffic_payload["severity"], "heavy")
+                    traffic = client.get("/api/traffic/caudan_north")
+                    print_api_evidence("TC-052", "Single-camera traffic lookup returns the latest reading",
+                                       method="GET", path="/api/traffic/caudan_north",
+                                       expected_status=200, response=traffic)
+                    self.assertEqual(traffic.status_code, 200)
+                    traffic_payload = traffic.json()
+                    self.assertEqual(traffic_payload["camera_id"], "caudan_north")
+                    self.assertEqual(traffic_payload["severity"], "heavy")
 
-                alert = client.post(
-                    "/api/alerts/trigger",
-                    json={"camera_id": "caudan_north", "message": ""},
-                )
-                self.assertEqual(alert.status_code, 201)
-                alert_payload = alert.json()
-                self.assertEqual(alert_payload["camera_id"], "caudan_north")
-                self.assertEqual(alert_payload["severity"], "heavy")
-                self.assertEqual(alert_payload["message"], "Heavy congestion ahead")
+                    alert = client.post(
+                        "/api/alerts/trigger",
+                        json={"camera_id": "caudan_north", "message": ""},
+                    )
+                    print_api_evidence("TC-053", "Alert trigger creates a new alert",
+                                       method="POST", path="/api/alerts/trigger",
+                                       expected_status=201, response=alert)
+                    self.assertEqual(alert.status_code, 201)
+                    alert_payload = alert.json()
+                    self.assertEqual(alert_payload["camera_id"], "caudan_north")
+                    self.assertEqual(alert_payload["severity"], "heavy")
+                    self.assertEqual(alert_payload["message"], "Heavy congestion ahead")
 
-                alerts = client.get("/api/alerts")
-                self.assertEqual(alerts.status_code, 200)
-                self.assertEqual(alerts.json()[0]["alert_id"], alert_payload["alert_id"])
+                    alerts = client.get("/api/alerts")
+                    print_api_evidence("TC-054", "Alert list includes the just-triggered alert",
+                                       method="GET", path="/api/alerts",
+                                       expected_status=200, response=alerts)
+                    self.assertEqual(alerts.status_code, 200)
+                    self.assertEqual(alerts.json()[0]["alert_id"], alert_payload["alert_id"])
 
-                traffic_all = client.get("/api/traffic")
-                self.assertEqual(traffic_all.status_code, 200)
-                self.assertIn("caudan_north", traffic_all.json())
+                    traffic_all = client.get("/api/traffic")
+                    print_api_evidence("TC-055", "Traffic-all endpoint includes the monitored camera",
+                                       method="GET", path="/api/traffic",
+                                       expected_status=200, response=traffic_all)
+                    self.assertEqual(traffic_all.status_code, 200)
+                    self.assertIn("caudan_north", traffic_all.json())
+            finally:
+                app_main.app.dependency_overrides.pop(app_main.require_user, None)
 
 
 if __name__ == "__main__":

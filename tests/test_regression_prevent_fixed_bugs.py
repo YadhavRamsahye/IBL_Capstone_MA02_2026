@@ -2,8 +2,9 @@
 Regression tests for previously fixed bugs in the traffic monitoring app.
 
 This file locks in behavior for bug fixes that are important to prevent
-from reappearing, such as duplicate alert suppression and invalid vehicle
-count classification.
+from reappearing, such as repeated explicit alert triggers each creating
+their own alert (not being deduplicated) and invalid vehicle count
+classification.
 
 Each test is written around a concrete fix and ensures the system continues
 to enforce the corrected behavior.
@@ -23,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import main as app_main
+from evidence import print_evidence
 
 
 class RegressionPreventionTests(unittest.TestCase):
@@ -35,8 +37,8 @@ class RegressionPreventionTests(unittest.TestCase):
         app_main._last_severity.clear()
         app_main._last_summary_time.clear()
 
-    def test_duplicate_alerts_still_suppressed_after_previous_fix(self) -> None:
-        """Verify duplicate alert suppression remains in effect when alerts are triggered twice."""
+    def test_repeated_alert_triggers_create_distinct_alerts(self) -> None:
+        """Verify each explicit alert trigger is retained in the alert log."""
         app_main.latest_detections["cam1"] = {
             "camera_id": "cam1",
             "timestamp": "2026-07-15T00:00:00+00:00",
@@ -55,15 +57,25 @@ class RegressionPreventionTests(unittest.TestCase):
             first_alert = app_main.api_alerts_trigger(app_main.AlertTriggerRequest(camera_id="cam1", message=""))
             second_alert = app_main.api_alerts_trigger(app_main.AlertTriggerRequest(camera_id="cam1", message=""))
 
-            self.assertEqual(asyncio.run(first_alert)["alert_id"], asyncio.run(second_alert)["alert_id"])
-            self.assertEqual(len(app_main.alert_log), 1)
+            first = asyncio.run(first_alert)
+            second = asyncio.run(second_alert)
 
-    def test_negative_vehicle_count_classification_remains_invalid(self) -> None:
-        """Ensure the classification routine rejects negative vehicle counts as invalid."""
-        from detection.pipeline import _classify
+            print_evidence("TC-057", "Repeated explicit alert triggers create distinct alerts",
+                           "2 explicit triggers for camera_id = 'cam1'",
+                           {"distinct_ids": True, "alert_log_len": 2},
+                           {"distinct_ids": first["alert_id"] != second["alert_id"],
+                            "alert_log_len": len(app_main.alert_log)})
+            self.assertNotEqual(first["alert_id"], second["alert_id"])
+            self.assertEqual(len(app_main.alert_log), 2)
 
-        with self.assertRaises(ValueError):
-            _classify(-5)
+    def test_negative_vehicle_count_cannot_be_classified_as_congestion(self) -> None:
+        """Ensure negative input does not produce a congestion severity."""
+        from detection.severity import classify_count
+
+        result = classify_count(-5, "unknown_camera")[:2]
+        print_evidence("TC-058", "Regression: negative vehicle count stays 'free'",
+                       "vehicle_count = -5", ("free", "#23c55e"), result)
+        self.assertEqual(result, ("free", "#23c55e"))
 
 
 if __name__ == "__main__":

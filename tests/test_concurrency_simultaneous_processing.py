@@ -1,15 +1,17 @@
 """
 Concurrency tests for the traffic monitoring app.
 
-This file simulates concurrent alert generation for the same camera and
-verifies that duplicate alert suppression remains correct under parallel
-load. It exercises shared in-memory state and helps detect race-conditions
-in alert creation logic.
+This file simulates many concurrent, explicit alert-trigger requests for the
+same camera and verifies that shared in-memory state (alert_log, alert IDs)
+stays correct under parallel load - no lost updates, no duplicate/collided
+IDs, no dropped alerts from a race on the shared log.
 
 Key behavior tested:
-- multiple concurrent requests to trigger an alert for one camera
-- only one alert is persisted
-- duplicate alerts are suppressed reliably
+- many concurrent explicit alert triggers for one camera
+- every request is retained as its own alert (explicit triggers are never
+  deduplicated - see test_regression_prevent_fixed_bugs.py)
+- each alert gets a distinct ID and the shared alert_log ends up with exactly
+  one entry per request, with no entries lost or corrupted by the race
 """
 
 import asyncio
@@ -24,10 +26,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import main as app_main
+from evidence import print_evidence
 
 
 class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
-    """Concurrency tests that verify duplicate suppression under parallel alert load."""
+    """Concurrency tests for parallel alert creation."""
 
     async def asyncSetUp(self) -> None:
         """Reset shared runtime state before each concurrency scenario."""
@@ -38,7 +41,7 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         app_main.incident_detector = app_main.IncidentDetector()
 
     async def test_simultaneous_alert_generation_for_single_camera(self) -> None:
-        """Issue many concurrent alert triggers and assert only one actual alert is recorded."""
+        """Issue many concurrent alert triggers and retain each explicit request."""
         app_main.latest_detections["cam1"] = {
             "camera_id": "cam1",
             "timestamp": "2026-07-15T00:00:00+00:00",
@@ -49,7 +52,7 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             "frame_shape": [720, 1280],
         }
 
-        async def delayed_alert_description(detection):
+        async def delayed_alert_description(detection, live_severity=None):
             """Simulated async summary generation to increase concurrency contention."""
             await asyncio.sleep(0.01)
             return SimpleNamespace(summary="Heavy congestion ahead", source="template_fallback")
@@ -65,10 +68,15 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             ]
             alerts = await asyncio.gather(*tasks)
 
-        self.assertEqual(len(alerts), 100)
         alert_ids = {alert["alert_id"] for alert in alerts}
-        self.assertEqual(len(alert_ids), 1)
-        self.assertEqual(len(app_main.alert_log), 1)
+        print_evidence("TC-044", "100 concurrent alert triggers each get a distinct ID",
+                       "100 concurrent api_alerts_trigger() calls for camera_id = 'cam1'",
+                       {"alerts_returned": 100, "distinct_ids": 100, "alert_log_len": 100},
+                       {"alerts_returned": len(alerts), "distinct_ids": len(alert_ids),
+                        "alert_log_len": len(app_main.alert_log)})
+        self.assertEqual(len(alerts), 100)
+        self.assertEqual(len(alert_ids), 100)
+        self.assertEqual(len(app_main.alert_log), 100)
 
         self.assertEqual(app_main.alert_log[0]["camera_id"], "cam1")
         self.assertEqual(app_main.alert_log[0]["severity"], "heavy")

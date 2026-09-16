@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import main as app_main
+from evidence import print_api_evidence, print_evidence
 
 
 class ResilienceRecoveryTests(unittest.TestCase):
@@ -50,10 +51,22 @@ class ResilienceRecoveryTests(unittest.TestCase):
             "source": "mock",
             "validated": True,
         }]), patch("main._camera_loop", side_effect=failing_camera_loop):
-            with TestClient(app_main.app) as client:
-                status = client.get("/api/status")
-                self.assertEqual(status.status_code, 200)
-                self.assertEqual(status.json()["system"], "online")
+            app_main.app.dependency_overrides[app_main.require_user] = lambda: {
+                "username": "test", "role": "admin", "id": "test",
+            }
+            try:
+                with TestClient(app_main.app) as client:
+                    status = client.get("/api/status")
+                    print_api_evidence(
+                        "TC-059", "API stays online after a camera loop crashes",
+                        method="GET", path="/api/status", expected_status=200,
+                        response=status,
+                        extra={"Injected failure": "camera loop raises RuntimeError"},
+                    )
+                    self.assertEqual(status.status_code, 200)
+                    self.assertEqual(status.json()["system"], "online")
+            finally:
+                app_main.app.dependency_overrides.pop(app_main.require_user, None)
 
     def test_summary_service_falls_back_when_claude_api_fails(self) -> None:
         """Force Claude API failure and verify the summary service uses fallback content."""
@@ -71,8 +84,13 @@ class ResilienceRecoveryTests(unittest.TestCase):
             """A mocked Claude API request that always fails to trigger fallback logic."""
             raise RuntimeError("Claude API unreachable")
 
-        with patch("detection.claude_api._call_claude_api", new=AsyncMock(side_effect=failing_api_call)):
+        with patch("detection.claude_api._call_model", new=AsyncMock(side_effect=failing_api_call)), \
+                patch("detection.claude_api._api_usable", return_value=True), \
+                patch("detection.claude_api._is_retryable", return_value=False):
             summary = asyncio.run(app_main.summary_service.generate_summary(detection))
+            print_evidence("TC-060", "Summary service falls back to a template when Claude fails",
+                           "Claude API call raises RuntimeError (non-retryable)",
+                           "template_fallback", summary.source)
             self.assertEqual(summary.source, "template_fallback")
             self.assertIn("Bottleneck detected at Cam1", summary.summary)
 
