@@ -6,6 +6,7 @@ Team     : IBL Group
 
 Author   : [Rughoo Sahil Singh] (22414560) / Jehan Khaytoo (22420172) - Scrum Master
 Role     : Tech Lead / Scrum Master
+Module   : Dashboard UI / Templates
 =============================================================
 -->
 
@@ -15,6 +16,7 @@ Role     : Tech Lead / Scrum Master
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Traffic Map - AI Bottleneck Detection</title>
+    <link rel="icon" type="image/jpeg" href="/static/ibl-logo.jpg">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         *, *::before, *::after {
@@ -39,10 +41,19 @@ Role     : Tech Lead / Scrum Master
         .navbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
         .nav-icon {
             width: 36px; height: 36px; flex-shrink: 0;
-            background: linear-gradient(135deg, #e94560, #0f3460);
+            background: #ffffff; padding: 3px;
             border-radius: 8px; display: flex; align-items: center; justify-content: center;
+            overflow: hidden;
         }
-        .brand-title { font-size: 16px; font-weight: 600; color: #e6edf3; white-space: nowrap; }
+        .nav-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        /* min-width/overflow are load-bearing: the flex parent can shrink this
+           box below the title's width, and without them the nowrap text paints
+           outside its box and over .navbar-right instead of truncating. */
+        .brand-title {
+            font-size: 16px; font-weight: 600; color: #e6edf3;
+            white-space: nowrap; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis;
+        }
         .brand-accent { color: #e94560; }
         .title-short { display: none; }
         .navbar-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
@@ -70,7 +81,7 @@ Role     : Tech Lead / Scrum Master
         }
         .logout-btn:hover { background: rgba(233,69,96,.2); }
 
-        /* Hamburger — hidden on desktop */
+        /* Hamburger - hidden on desktop */
         .hamburger-btn {
             display: none;
             background: rgba(255,255,255,.05); border: 1px solid #30363d;
@@ -151,7 +162,7 @@ Role     : Tech Lead / Scrum Master
         .sidebar::-webkit-scrollbar { width: 4px; }
         .sidebar::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 
-        /* Drawer close row — only visible when drawer is active */
+        /* Drawer close row - only visible when drawer is active */
         .sidebar-close-row {
             display: none; align-items: center; justify-content: space-between;
             padding: 14px 16px; border-bottom: 1px solid #30363d; flex-shrink: 0;
@@ -237,8 +248,15 @@ Role     : Tech Lead / Scrum Master
         .no-incidents  { font-size: 11px; color: rgba(230,237,243,.3); text-align: center; padding: 12px 0; }
 
         /* ── Map ── */
-        .map-wrapper { flex: 1; position: relative; overflow: hidden; }
-        #map { width: 100%; height: 100%; }
+        /* Column flex, not an absolute overlay: the strip used to float on
+           top of the map with `position:absolute; bottom:12px`, which had no
+           guaranteed clearance from the viewport edge or from Leaflet's own
+           bottom-right attribution control - both overlapped it at shorter
+           viewport heights. Giving the strip a real flex row of its own means
+           #map's flex:1 always yields exactly the space the strip needs, at
+           any viewport size, and neither ever covers the other. */
+        .map-wrapper { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
+        #map { width: 100%; flex: 1; min-height: 0; }   /* min-height:0 - flex children don't shrink below content size without it */
 
         .map-info-bar {
             position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
@@ -249,6 +267,45 @@ Role     : Tech Lead / Scrum Master
         }
         .map-info-bar strong { color: #58a6ff; }
         .map-info-bar .live  { color: #23c55e; }
+
+        /* ── Camera overview strip ── */
+        .camera-strip {
+            flex-shrink: 0;   /* real row in the flex column, not an overlay - never covers map content */
+            display: flex; gap: 8px; overflow-x: auto;
+            padding: 10px 12px; background: #10151c; border-top: 1px solid #21262d;
+        }
+        .camera-strip::-webkit-scrollbar { height: 4px; }
+        .camera-strip::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+        .strip-item {
+            flex-shrink: 0; width: 120px; cursor: pointer;
+            background: rgba(22,27,34,.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            border: 1px solid #30363d; border-radius: 8px; overflow: hidden;
+            transition: border-color .15s;
+        }
+        .strip-item:hover { border-color: #58a6ff; }
+        .strip-thumb-wrap { width: 100%; aspect-ratio: 16/9; background: #1c2128; position: relative; }
+        .strip-thumb-wrap img {
+            width: 100%; height: 100%; object-fit: cover; display: block;
+        }
+        .strip-thumb-ph {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: #5a6675; font-size: 9px; text-align: center; padding: 4px;
+        }
+        .strip-sev-dot {
+            position: absolute; top: 4px; right: 4px; width: 8px; height: 8px;
+            border-radius: 50%; border: 1.5px solid rgba(0,0,0,.5);
+        }
+        .strip-label { padding: 5px 7px; }
+        .strip-name  { font-size: 10px; font-weight: 600; color: #c8d8e8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .strip-count { font-size: 9px; color: rgba(230,237,243,.5); margin-top: 1px; }
+
+        @media (max-width: 639px) {
+            /* No bottom-offset math needed any more - the strip is a normal
+               flex row inside .map-wrapper now, and body's own
+               padding-bottom (set elsewhere) already keeps .main-layout
+               clear of the fixed mobile bar. */
+            .strip-item { width: 96px; }
+        }
 
         @keyframes incidentPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
         @keyframes incidentRingPulse {
@@ -288,6 +345,13 @@ Role     : Tech Lead / Scrum Master
         @media (max-width: 1023px) {
             .hamburger-btn { display: flex; }
 
+            /* The hamburger appears at this width, so the full title no longer
+               fits alongside the status badge, user, links and bell. Swap to
+               the short title here rather than waiting for the 639px phone
+               breakpoint. */
+            .title-full  { display: none; }
+            .title-short { display: inline; }
+
             .sidebar {
                 position: fixed; top: 56px; left: 0; bottom: 0; width: 280px;
                 transform: translateX(-100%); z-index: 900;
@@ -326,6 +390,18 @@ Role     : Tech Lead / Scrum Master
             .nav-icon { width: 30px; height: 30px; }
             .brand-title { font-size: 12px; }
             .logout-btn { display: none; }
+            .nav-analytics { display: none; }
+        }
+
+        /* Leaflet popup mobile tweak */
+        .leaflet-popup-content { max-width: min(300px, 85vw) !important; }
+
+        /* Leaflet controls - mobile overrides */
+        @media (max-width: 639px) {
+            /* Hide +/- buttons - users pinch-zoom on touch */
+            .leaflet-control-zoom { display: none !important; }
+            /* Lift attribution + scale bar above the bottom stats bar */
+            .leaflet-bottom { bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important; }
         }
 
         /* Hidden demo button */
@@ -350,15 +426,11 @@ Role     : Tech Lead / Scrum Master
             </svg>
         </button>
         <div class="nav-icon">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <circle cx="10" cy="10" r="7" fill="rgba(255,255,255,0.15)"/>
-                <circle cx="10" cy="10" r="2" fill="white"/>
-                <path d="M6 10h2M12 10h2M10 6v2M10 12v2" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
+            <img src="/static/ibl-logo.jpg" alt="IBL Group">
         </div>
         <h1 class="brand-title">
-            <span class="title-full">AI Traffic Bottleneck Detection &mdash; <span class="brand-accent">Mauritius</span></span>
-            <span class="title-short">Traffic AI &mdash; <span class="brand-accent">Mauritius</span></span>
+            <span class="title-full">AI Traffic Bottleneck Detection - <span class="brand-accent">Mauritius</span></span>
+            <span class="title-short">Traffic AI - <span class="brand-accent">Mauritius</span></span>
         </h1>
     </div>
     <div class="navbar-right">
@@ -367,7 +439,7 @@ Role     : Tech Lead / Scrum Master
             <span class="status-text" id="systemStatus">System Online</span>
         </div>
         <div class="user-info">Logged in as <strong>{{ user }}</strong></div>
-        <a href="/analytics" style="color:#58a6ff;font-size:13px;text-decoration:none;">📊 Analytics</a>
+        <a href="/analytics" class="nav-analytics" style="color:#58a6ff;font-size:13px;text-decoration:none;white-space:nowrap;">📊 Analytics</a>
         <a href="/logout" class="logout-btn">Sign Out</a>
         <div class="bell-wrapper" id="bellWrapper">
             <button class="bell-btn" id="bellBtn" onclick="toggleAlerts()">🔔</button>
@@ -428,19 +500,19 @@ Role     : Tech Lead / Scrum Master
             <h3>Live Overview</h3>
             <div class="stat-grid">
                 <div class="stat-card success">
-                    <div class="stat-value" id="stat-cameras">—</div>
+                    <div class="stat-value" id="stat-cameras">-</div>
                     <div class="stat-label">Active Cameras</div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-value" id="stat-bottlenecks">—</div>
+                    <div class="stat-value" id="stat-bottlenecks">-</div>
                     <div class="stat-label">Bottlenecks</div>
                 </div>
                 <div class="stat-card warning">
-                    <div class="stat-value" id="stat-vehicles">—</div>
+                    <div class="stat-value" id="stat-vehicles">-</div>
                     <div class="stat-label">Total Vehicles</div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-value" id="stat-incidents">—</div>
+                    <div class="stat-value" id="stat-incidents">-</div>
                     <div class="stat-label">Active Incidents</div>
                 </div>
             </div>
@@ -467,12 +539,14 @@ Role     : Tech Lead / Scrum Master
     <!-- Map -->
     <div class="map-wrapper">
         <div class="map-info-bar" id="infoBar">
-            Viewing: <strong>Mauritius Road Network</strong> &nbsp;|&nbsp;
+            Viewing: <strong>Mauritius - MYT Traffic Watch</strong> &nbsp;|&nbsp;
             AI Detection: <span class="live">● Live</span> &nbsp;|&nbsp;
-            Cameras: <strong id="infoActiveCams">—</strong> &nbsp;|&nbsp;
-            Vehicles: <strong id="infoVehicles">—</strong>
+            Cameras: <strong id="infoActiveCams">-</strong>
+            <span id="cameraCoverage" style="opacity:.55;font-size:11px;"></span> &nbsp;|&nbsp;
+            Vehicles: <strong id="infoVehicles">-</strong>
         </div>
         <div id="map"></div>
+        <div class="camera-strip" id="cameraStrip"></div>
     </div>
 
 </div>
@@ -480,17 +554,17 @@ Role     : Tech Lead / Scrum Master
 <!-- ── MOBILE BOTTOM BAR ── -->
 <div class="mobile-bar">
     <div class="mobile-stat" onclick="openSidebar()">
-        <div class="mobile-stat-value success" id="mStat-cameras">—</div>
+        <div class="mobile-stat-value success" id="mStat-cameras">-</div>
         <div class="mobile-stat-label">Cameras</div>
     </div>
     <div class="mobile-divider"></div>
     <div class="mobile-stat" onclick="openSidebar()">
-        <div class="mobile-stat-value warning" id="mStat-vehicles">—</div>
+        <div class="mobile-stat-value warning" id="mStat-vehicles">-</div>
         <div class="mobile-stat-label">Vehicles</div>
     </div>
     <div class="mobile-divider"></div>
     <div class="mobile-stat" onclick="openSidebar()">
-        <div class="mobile-stat-value" id="mStat-incidents">—</div>
+        <div class="mobile-stat-value" id="mStat-incidents">-</div>
         <div class="mobile-stat-label">Incidents</div>
     </div>
     <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleSidebar()">
@@ -508,15 +582,15 @@ Role     : Tech Lead / Scrum Master
 <script>
 'use strict';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = window.location.origin;
 const POLL_MS  = 5000;
 
 // Seeded with correct coordinates (Fix 3); overridden/extended by fetchCameras() at init.
 const CAMERA_LOCS = {
-    caudan_north: { coords: [-20.1626, 57.4939], name: 'Caudan North',  label: 'Caudan North — Port Louis' },
-    caudan_south: { coords: [-20.1640, 57.4945], name: 'Caudan South',  label: 'Caudan South — Port Louis' },
-    la_chaussee:  { coords: [-20.1608, 57.4972], name: 'La Chaussee',   label: 'La Chaussee Street — Port Louis' },
-    casernes:     { coords: [-20.1590, 57.4960], name: 'Casernes',      label: 'Casernes / Brabant Street — Port Louis' },
+    caudan_north: { coords: [-20.1626, 57.4939], name: 'Caudan North',  label: 'Caudan North - Port Louis' },
+    caudan_south: { coords: [-20.1640, 57.4945], name: 'Caudan South',  label: 'Caudan South - Port Louis' },
+    la_chaussee:  { coords: [-20.1608, 57.4972], name: 'La Chaussee',   label: 'La Chaussee Street - Port Louis' },
+    casernes:     { coords: [-20.1590, 57.4960], name: 'Casernes',      label: 'Casernes / Brabant Street - Port Louis' },
 };
 
 const SEV_COLOR = {
@@ -535,7 +609,8 @@ const satTile = L.tileLayer(
     { maxZoom: 19, attribution: '&copy; Esri' }
 );
 
-const map = L.map('map', { center: MAURITIUS, zoom: 11, layers: [streetTile] });
+const map = L.map('map', { center: MAURITIUS, zoom: 11, layers: [streetTile], zoomControl: false });
+L.control.zoom({ position: 'topright' }).addTo(map);
 
 let currentLayer = 'streets', heatLayer = null, heatmapVisible = false;
 
@@ -567,6 +642,70 @@ function camIncidentIcon(color) {
     });
 }
 
+// Region-aggregate marker for catalogued cameras nobody has verified yet.
+// Replaces the old approach of scattering them on a ring around the region
+// centroid, purely so each got its own pixel - that invented a precise-
+// looking position for a camera whose position is not known, and looked
+// exactly like a bug (a perfect circle of evenly-spaced dots over open
+// ground) to anyone using the map. One honest marker per region instead,
+// labelled with the count, expanding to the camera list on click.
+function regionMarkerIcon(count) {
+    return L.divIcon({
+        className: '',
+        html: `<div style="width:26px;height:26px;background:rgba(48,54,61,.75);
+            border:2px dashed #8b949e;border-radius:50%;
+            display:flex;align-items:center;justify-content:center;
+            color:#c8d0d8;font-size:11px;font-weight:700;
+            box-shadow:0 0 6px rgba(0,0,0,.5);">${count}</div>`,
+        iconSize: [26,26], iconAnchor: [13,13],
+    });
+}
+
+function buildRegionMarker(region, entries) {
+    const markerId = `region:${region}`;
+    if (cameraMarkers[markerId]) return;
+    const coords = entries[0].loc.coords;   // all share the exact region centroid - see fetch_cameras.py
+    const count = entries.length;
+    const namesHtml = entries
+        .slice()
+        .sort((a, b) => a.loc.name.localeCompare(b.loc.name))
+        .map(e => `<li>${escAttr(e.loc.name)}</li>`)
+        .join('');
+
+    cameraMarkers[markerId] = L.marker(coords, { icon: regionMarkerIcon(count) })
+        .addTo(map)
+        .bindPopup(`
+            <div style="min-width:210px;font-family:Segoe UI,sans-serif;">
+                <div style="font-size:14px;font-weight:700;margin-bottom:2px;">${escAttr(region)}</div>
+                <div style="font-size:12px;color:#888;margin-bottom:8px;">
+                    ${count} catalogued camera${count === 1 ? '' : 's'} · position not verified
+                </div>
+                <ul style="margin:0;padding-left:18px;font-size:12px;color:#555;line-height:1.6;">
+                    ${namesHtml}
+                </ul>
+                <div style="font-size:11px;color:#888;margin-top:8px;">
+                    Shown at the region centre - none of these have been checked
+                    against a real road yet.
+                </div>
+            </div>`);
+}
+
+// Dashed radius around an individually-shown marker whose position hasn't
+// been verified - e.g. a camera that starts being monitored before anyone
+// has run it through tools/validate_camera_coords.py. A confident pin for a
+// position known only to within a few hundred metres is a small untruth;
+// showing the uncertainty reads as rigour instead of a gap.
+const ACCURACY_RADIUS_M = 400;
+const accuracyCircles = {};
+
+function addAccuracyCircle(id, coords) {
+    if (accuracyCircles[id]) return;
+    accuracyCircles[id] = L.circle(coords, {
+        radius: ACCURACY_RADIUS_M, color: '#f0883e', weight: 1.5, dashArray: '4,4',
+        fillColor: '#f0883e', fillOpacity: 0.05, interactive: false,
+    }).addTo(map);
+}
+
 // Fetch /api/cameras, merge server coords into CAMERA_LOCS, create markers.
 // Falls back silently to the hardcoded coords above if the API is unavailable.
 async function fetchCameras() {
@@ -578,19 +717,346 @@ async function fetchCameras() {
                 if (cam.lat == null || cam.lng == null) continue;
                 const existing = CAMERA_LOCS[cam.camera_id];
                 CAMERA_LOCS[cam.camera_id] = {
-                    coords: [cam.lat, cam.lng],
-                    name:   cam.name || existing?.name || cam.camera_id,
-                    label:  cam.name || existing?.label || cam.camera_id,
+                    coords:    [cam.lat, cam.lng],
+                    name:      cam.name || existing?.name || cam.camera_id,
+                    label:     cam.name || existing?.label || cam.camera_id,
+                    region:    cam.region || '',
+                    // false = in MYT's catalogue but detection is not running
+                    // on it (see ACTIVE_CAMERAS). No data will ever arrive.
+                    monitored: cam.monitored !== false,
+                    // 'unverified' = placed at its region centroid - MYT
+                    // publishes no coordinates and this one hasn't been
+                    // checked against a real road yet.
+                    precision: cam.coords_precision || 'exact',
                 };
             }
         }
     } catch (_) {}
+
+    let monitored = 0, catalogued = 0;
+    const unverifiedByRegion = {};
+
     for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
         if (cameraMarkers[id]) continue;
-        cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
-            .addTo(map)
-            .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
+
+        if (loc.monitored === false) {
+            catalogued++;
+            if (loc.precision !== 'exact') {
+                // Grouped into one region marker below, not plotted individually.
+                if (!unverifiedByRegion[loc.region]) unverifiedByRegion[loc.region] = [];
+                unverifiedByRegion[loc.region].push({ id, loc });
+                continue;
+            }
+            // Verified but not monitored: still its own marker, deliberately a
+            // different shape and muted styling so it never reads as a live
+            // camera with a "free traffic" green dot.
+            cameraMarkers[id] = L.circleMarker(loc.coords, {
+                radius: 5, color: '#8b949e', weight: 1.5,
+                fillColor: '#30363d', fillOpacity: 0.55,
+            }).addTo(map).bindPopup(
+                `<div style="min-width:190px;font-family:Segoe UI,sans-serif;">
+                   <div style="font-size:14px;font-weight:700;">${loc.label}</div>
+                   <div style="font-size:11px;color:#888;margin-bottom:6px;">${loc.region}</div>
+                   <div style="font-size:12px;color:#555;">
+                     Camera published by MYT but not currently monitored.
+                   </div>
+                   <div style="font-size:11px;color:#888;margin-top:6px;">
+                     Add <code>${id}</code> to ACTIVE_CAMERAS to run detection on it.
+                   </div>
+                   <div style="font-size:11px;color:#3fb950;margin-top:6px;">
+                     ✓ Position verified against a real road.</div>
+                 </div>`);
+        } else {
+            monitored++;
+            cameraMarkers[id] = L.marker(loc.coords, { icon: camIcon(SEV_COLOR.unknown) })
+                .addTo(map)
+                .bindPopup(`<strong>${loc.label}</strong><br><small>Waiting for data…</small>`);
+            // Thumbnail only polls while this camera's popup is actually open.
+            cameraMarkers[id].on('popupopen',  () => startFramePolling(id));
+            cameraMarkers[id].on('popupclose', () => stopFramePolling(id));
+            if (loc.precision !== 'exact') addAccuracyCircle(id, loc.coords);
+        }
     }
+
+    for (const [region, entries] of Object.entries(unverifiedByRegion)) {
+        buildRegionMarker(region, entries);
+    }
+
+    // infoActiveCams (set in applyTrafficData) already shows the monitored
+    // count in bold right before this - repeating "N monitored" here doubled
+    // it ("Cameras: 4 4 monitored · 34 catalogued"). This adds only what
+    // the bold number doesn't already say.
+    const note = document.getElementById('cameraCoverage');
+    if (note) {
+        note.textContent = catalogued ? `· ${catalogued} catalogued` : '';
+    }
+}
+
+// ── Popup rendering ───────────────────────────────────────────────────────────
+// The detections WebSocket pushes once per second. Rebuilding popup HTML on
+// every push would replace the destination <input> mid-keystroke, so the typed
+// text and focus are kept here and the open popup is patched field-by-field
+// instead of re-rendered. See applyTrafficData().
+const routeDestCache = {};
+
+function escAttr(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+}
+
+function routePanelHtml(id, lat, lng) {
+    return `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
+            <div style="font-size:11px;color:#888;margin-bottom:5px;font-weight:600;">🗺 Alternative Route</div>
+            <input id="routeDest_${id}" type="text" placeholder="Enter destination…"
+                value="${escAttr(routeDestCache[id] || '')}"
+                oninput="routeDestCache['${id}'] = this.value"
+                onkeydown="if (event.key === 'Enter') { event.preventDefault(); openRoute('${id}',${lat},${lng}); }"
+                style="width:100%;padding:5px 8px;font-size:12px;border:1px solid #ddd;border-radius:4px;margin-bottom:6px;box-sizing:border-box;">
+            <button onclick="openRoute('${id}',${lat},${lng})"
+                style="width:100%;padding:5px;background:#16a34a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">
+                Get Alternative Route ↗
+            </button>
+        </div>`;
+}
+
+// Per-direction rows. A two-way road where one side is blocked and the other
+// is clear cannot be described by a single severity, so both are shown; an
+// uncalibrated camera reports only "combined" and this renders nothing.
+function directionRowsHtml(det) {
+    const dirs = det.directions || {};
+    const labels = Object.keys(dirs).filter(l => l !== 'combined');
+    if (!labels.length) return '';
+    const rows = labels.sort().map(l => {
+        const d = dirs[l];
+        const name = l.charAt(0).toUpperCase() + l.slice(1);
+        return `<tr><td style="padding-right:8px;">${escAttr(name)}</td>
+                    <td style="color:${d.color};font-weight:600;">${escAttr(d.severity)}</td>
+                    <td style="text-align:right;">${d.vehicle_count}</td></tr>`;
+    }).join('');
+    return `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;">
+        <div style="font-size:11px;color:#888;font-weight:600;margin-bottom:4px;">↕ By direction</div>
+        <table style="font-size:12px;color:#555;width:100%;">${rows}</table>
+    </div>`;
+}
+
+// Single source of truth for the badge - it is rendered from two places.
+function incidentBadgeHtml(det) {
+    if (det.possible_incident !== true) return '';
+    const d = det.incident_detail || {};
+    const why = d.reason ? ` title="${escAttr(d.reason)}"` : '';
+    const conf = d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : '';
+    return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
+}
+
+// ── Live camera streaming (MJPEG) ─────────────────────────────────────────────
+// GET /api/cameras/{id}/stream.mjpg is a standard multipart/x-mixed-replace
+// stream - a plain <img src="…"> renders it continuously with zero JS polling
+// loop. This replaced an earlier version that fetched frame.jpg on a client
+// timer: same underlying data (a new annotated frame exists once per
+// detection cycle, ~2s, either way - this doesn't create frames faster than
+// that), but polling meant every frame paid a full request/blob/swap round
+// trip and flashed back to the placeholder in between, which is what made it
+// look like a slow slideshow rather than a feed. The native multipart stream
+// removes all of that: each new frame lands the instant it's ready.
+const activeStreams = {};   // img element id -> { camId, phId, liveId }, for visibilitychange
+
+function _streamUrl(camId) {
+    return `${API_BASE}/api/cameras/${camId}/stream.mjpg?t=${Date.now()}`;
+}
+
+function connectStream(imgId, phId, liveId, camId) {
+    const img = document.getElementById(imgId);
+    if (!img) return;
+    const ph   = phId   ? document.getElementById(phId)   : null;
+    const live = liveId ? document.getElementById(liveId) : null;
+
+    img.onload = () => {
+        img.style.display = 'block';
+        if (ph)   ph.style.display = 'none';
+        if (live) live.style.display = 'inline-block';
+    };
+    img.onerror = () => {
+        img.style.display = 'none';
+        if (live) live.style.display = 'none';
+        if (ph) { ph.style.display = 'flex'; ph.textContent = 'No footage yet'; }
+    };
+    img.src = _streamUrl(camId);
+    activeStreams[imgId] = { camId, phId, liveId };
+}
+
+function disconnectStream(imgId) {
+    const img = document.getElementById(imgId);
+    if (img) { img.onload = null; img.onerror = null; img.src = ''; }
+    delete activeStreams[imgId];
+}
+
+// Tab hidden: drop every open stream connection (no point holding it open
+// server-side for a tab nobody's looking at). Tab visible again: reconnect
+// everything that was active, fresh - a stale multipart connection doesn't
+// reliably resume on its own.
+document.addEventListener('visibilitychange', () => {
+    for (const [imgId, meta] of Object.entries(activeStreams)) {
+        const img = document.getElementById(imgId);
+        if (!img) continue;
+        img.src = document.hidden ? '' : _streamUrl(meta.camId);
+    }
+});
+
+function cameraFrameHtml(id) {
+    return `
+        <div style="margin-bottom:8px;">
+            <div style="position:relative;width:100%;aspect-ratio:16/9;background:#1c2128;
+                border:1px solid #30363d;border-radius:6px;overflow:hidden;">
+                <img id="popFrame_${id}" style="width:100%;height:100%;object-fit:cover;display:none;" />
+                <div id="popFramePh_${id}" style="position:absolute;inset:0;display:flex;
+                    align-items:center;justify-content:center;color:#5a6675;font-size:11px;
+                    text-align:center;padding:8px;">
+                    Loading feed…
+                </div>
+                <div id="popFrameLive_${id}" style="display:none;position:absolute;top:5px;right:5px;
+                    background:rgba(0,0,0,.6);color:#e94560;font-size:9px;font-weight:700;
+                    padding:2px 7px;border-radius:10px;letter-spacing:.3px;">
+                    ● LIVE
+                </div>
+            </div>
+        </div>`;
+}
+
+function startFramePolling(id) {   // name kept - called from popupopen/popupclose below
+    connectStream(`popFrame_${id}`, `popFramePh_${id}`, `popFrameLive_${id}`, id);
+}
+
+function stopFramePolling(id) {
+    disconnectStream(`popFrame_${id}`);
+}
+
+// ── Camera overview strip ─────────────────────────────────────────────────────
+// Always-visible filmstrip, independent of any popup being open - which is
+// exactly why this does NOT use MJPEG. Every <img src="stream.mjpg"> holds an
+// open HTTP connection for as long as the element exists; four always-on strip
+// cameras plus a popup would be five permanently-open connections per logged-
+// in user. At the SRS's 100-500 concurrent users (§5.1.3) that's 500-2,500
+// held-open connections against one uvicorn process. Polling frame.jpg here
+// instead costs one short request every few seconds, not a standing
+// connection - the flicker MJPEG was built to remove matters far less at
+// thumbnail size than it does in an open, attention-getting popup.
+const STRIP_POLL_MS = 3000;
+let stripPoller = null;
+
+function buildCameraStrip() {
+    const strip = document.getElementById('cameraStrip');
+    if (!strip || strip.dataset.built) return;
+
+    let html = '';
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (loc.monitored === false) continue;   // catalogued only - never has a frame
+        html += `
+            <div class="strip-item" onclick="focusCamera('${id}')">
+                <div class="strip-thumb-wrap">
+                    <img id="stripImg_${id}" style="display:none;" />
+                    <div id="stripPh_${id}" class="strip-thumb-ph">Loading…</div>
+                    <div id="stripDot_${id}" class="strip-sev-dot" style="background:${SEV_COLOR.unknown};"></div>
+                </div>
+                <div class="strip-label">
+                    <div class="strip-name">${loc.name}</div>
+                    <div class="strip-count" id="stripCount_${id}">-</div>
+                </div>
+            </div>`;
+    }
+    strip.innerHTML = html;
+    strip.dataset.built = '1';
+    map.invalidateSize();   // #map's flex height just changed now the strip has real content
+
+    refreshStrip();
+    if (!stripPoller) {
+        stripPoller = setInterval(() => { if (!document.hidden) refreshStrip(); }, STRIP_POLL_MS);
+    }
+}
+
+async function refreshStripFrame(id) {
+    const img = document.getElementById(`stripImg_${id}`);
+    const ph  = document.getElementById(`stripPh_${id}`);
+    if (!img) return;   // strip not built yet, or camera dropped
+    try {
+        const res = await fetch(`${API_BASE}/api/cameras/${id}/frame.jpg?t=${Date.now()}`);
+        if (res.status === 404) {
+            img.style.display = 'none';
+            if (ph) { ph.style.display = 'flex'; ph.textContent = 'No footage yet'; }
+            return;
+        }
+        if (!res.ok) return;
+
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const prev = img.dataset.blobUrl;
+        img.src = url;
+        img.dataset.blobUrl = url;
+        img.style.display = 'block';
+        if (ph) ph.style.display = 'none';
+        if (prev) URL.revokeObjectURL(prev);
+    } catch (_) {}
+}
+
+function refreshStrip() {
+    for (const [id, loc] of Object.entries(CAMERA_LOCS)) {
+        if (loc.monitored === false) continue;
+        refreshStripFrame(id);
+    }
+}
+
+// Tab regains visibility: refresh the strip immediately rather than waiting
+// out the rest of the current STRIP_POLL_MS interval.
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && stripPoller) refreshStrip();
+});
+
+function focusCamera(id) {
+    const loc = CAMERA_LOCS[id];
+    if (!loc) return;
+    flyTo(loc.coords[0], loc.coords[1], 16);
+    cameraMarkers[id]?.openPopup();
+}
+
+function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
+    const incidentBadge = incidentBadgeHtml(det);
+    return `
+        <div style="min-width:200px;font-family:Segoe UI,sans-serif;">
+            <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
+            ${cameraFrameHtml(id)}
+            <div id="popSev_${id}" style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
+            <div id="popBadge_${id}">${incidentBadge}</div>
+            <table style="font-size:12px;color:#555;width:100%;">
+                <tr><td>Vehicles</td><td><b id="popVeh_${id}">${det.vehicle_count}</b></td></tr>
+                <tr><td>Detection interval</td><td id="popFps_${id}">${detectionIntervalText(det.fps_processed)}</td></tr>
+                <tr><td>Updated</td><td id="popUpd_${id}">${timeAgo(det.timestamp)}</td></tr>
+            </table>
+            <div id="popDirs_${id}">${directionRowsHtml(det)}</div>
+            ${isHeavy ? routePanelHtml(id, lat, lng) : ''}
+        </div>`;
+}
+
+// Update only the values inside an already-open popup, leaving the destination
+// input (and the user's focus and caret) untouched.
+// Returns false when the route panel needs to appear or disappear, since that
+// is a structural change a field patch cannot make.
+function patchOpenPopup(id, det, color, isHeavy, hasIncident) {
+    const sev = document.getElementById(`popSev_${id}`);
+    if (!sev) return false;                       // popup DOM not present
+    const panelPresent = !!document.getElementById(`routeDest_${id}`);
+    if (panelPresent !== isHeavy) return false;   // needs a rebuild
+
+    sev.textContent = det.severity.toUpperCase();
+    sev.style.color = color;
+    document.getElementById(`popVeh_${id}`).textContent = det.vehicle_count;
+    document.getElementById(`popFps_${id}`).textContent = detectionIntervalText(det.fps_processed);
+    document.getElementById(`popUpd_${id}`).textContent = timeAgo(det.timestamp);
+    const badge = document.getElementById(`popBadge_${id}`);
+    if (badge) badge.innerHTML = incidentBadgeHtml(det);
+    const dirs = document.getElementById(`popDirs_${id}`);
+    if (dirs) dirs.innerHTML = directionRowsHtml(det);
+    return true;
 }
 
 // ── Sidebar drawer ────────────────────────────────────────────────────────────
@@ -658,39 +1124,31 @@ function applyTrafficData(data) {
         const loc   = CAMERA_LOCS[id];
 
         if (cameraMarkers[id]) {
-            const isHeavy    = ['heavy', 'bottleneck'].includes(det.severity);
+            const marker      = cameraMarkers[id];
+            const isHeavy     = ['heavy', 'bottleneck'].includes(det.severity);
             const hasIncident = det.possible_incident === true;
-            cameraMarkers[id].setIcon(hasIncident ? camIncidentIcon(color) : camIcon(color));
+            marker.setIcon(hasIncident ? camIncidentIcon(color) : camIcon(color));
             const lat = loc?.coords[0] ?? 0, lng = loc?.coords[1] ?? 0;
-            const incidentBadge = hasIncident
-                ? `<div style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#f59e0b22;border:1px solid #f59e0b66;border-radius:10px;color:#f59e0b;font-size:11px;font-weight:600;">⚠ Possible Incident</div>`
-                : '';
-            const routePanel = isHeavy ? `
-                <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
-                    <div style="font-size:11px;color:#888;margin-bottom:5px;font-weight:600;">🗺 Alternative Route</div>
-                    <input id="routeDest_${id}" type="text" placeholder="Enter destination…"
-                        style="width:100%;padding:5px 8px;font-size:12px;border:1px solid #ddd;border-radius:4px;margin-bottom:6px;box-sizing:border-box;">
-                    <button onclick="openRoute('${id}',${lat},${lng})"
-                        style="width:100%;padding:5px;background:#16a34a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">
-                        Get Alternative Route ↗
-                    </button>
-                </div>` : '';
-            cameraMarkers[id].setPopupContent(`
-                <div style="min-width:200px;font-family:Segoe UI,sans-serif;">
-                    <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${loc?.label ?? id}</div>
-                    <div style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
-                    ${incidentBadge}
-                    <table style="font-size:12px;color:#555;width:100%;">
-                        <tr><td>Vehicles</td><td><b>${det.vehicle_count}</b></td></tr>
-                        <tr><td>FPS</td><td>${det.fps_processed?.toFixed(2) ?? '—'}</td></tr>
-                        <tr><td>Updated</td><td>${new Date(det.timestamp).toLocaleTimeString()}</td></tr>
-                    </table>
-                    ${routePanel}
-                </div>`);
+
+            // While the popup is open, patch values in place. Calling
+            // setPopupContent here would destroy the destination input the user
+            // is typing into - this runs once a second.
+            const patched = marker.isPopupOpen()
+                && patchOpenPopup(id, det, color, isHeavy, hasIncident);
+            if (!patched) {
+                marker.setPopupContent(
+                    popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng)
+                );
+            }
         }
 
         if (loc) heatPoints.push([loc.coords[0], loc.coords[1], Math.min(det.vehicle_count / 35, 1.0)]);
         totalVehicles += det.vehicle_count ?? 0;
+
+        const stripDot = document.getElementById(`stripDot_${id}`);
+        if (stripDot) stripDot.style.background = color;
+        const stripCount = document.getElementById(`stripCount_${id}`);
+        if (stripCount) stripCount.textContent = `${det.vehicle_count} · ${(det.severity ?? '').toUpperCase()}`;
 
         const li = document.createElement('li');
         li.onclick = () => loc && flyTo(loc.coords[0], loc.coords[1], 16);
@@ -790,7 +1248,7 @@ async function fetchIncidents() {
                 <div class="incident-row" onclick="flyTo(${lat},${lng},17)">
                     <div class="incident-row-top">
                         <div class="incident-type-dot" style="background:${inc.color};box-shadow:0 0 4px ${inc.color};"></div>
-                        <span class="incident-cam">${inc.location.split('—')[0].trim()}</span>
+                        <span class="incident-cam">${inc.location.split('-')[0].trim()}</span>
                         <span class="incident-conf" style="margin-left:auto;">${Math.round(inc.confidence*100)}% conf</span>
                     </div>
                     <div class="incident-type">${typeLabel} &nbsp;·&nbsp; ${inc.vehicle_count} vehicles &nbsp;·&nbsp; ${timeAgo(inc.timestamp)}</div>
@@ -836,7 +1294,7 @@ async function fetchAlerts() {
                     <div class="alert-dot" style="background:${a.color ?? '#e94560'};"></div>
                     <div class="alert-text">
                         <div class="alert-location">${name}</div>
-                        <div class="alert-msg">${a.severity?.toUpperCase()} — ${a.vehicle_count} vehicles</div>
+                        <div class="alert-msg">${a.severity?.toUpperCase()} - ${a.vehicle_count} vehicles</div>
                         <div class="alert-time">${new Date(a.timestamp).toLocaleTimeString()}</div>
                     </div>
                 </div>`;
@@ -844,7 +1302,7 @@ async function fetchAlerts() {
     } catch (_) {}
 }
 
-function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val ?? '—'; }
+function setText(id, val) { const e = document.getElementById(id); if (e) e.textContent = val ?? '-'; }
 
 function timeAgo(ts) {
     const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
@@ -853,10 +1311,36 @@ function timeAgo(ts) {
     return `${Math.floor(diff / 3600)}h ago`;
 }
 
+// fps_processed is 1 / (time one detection cycle actually took) - a real
+// number, but "FPS 0.40" reads like a broken video player rather than what
+// it actually is: how often this camera gets analysed. Inverting it back to
+// seconds names it for what it is - a deliberate spec (FRAME_INTERVAL is
+// nominally 2.0s; the true figure includes real processing overhead) rather
+// than something that looks like a defect.
+function detectionIntervalText(fps) {
+    if (!fps || fps <= 0) return '-';
+    return `${(1 / fps).toFixed(1)}s`;
+}
+
 // ── Route suggestion ──────────────────────────────────────────────────────────
 function openRoute(cameraId, lat, lng) {
-    const dest = document.getElementById(`routeDest_${cameraId}`)?.value?.trim();
-    if (!dest) return;
+    const input = document.getElementById(`routeDest_${cameraId}`);
+    // Fall back to the cache in case the popup was re-rendered between the
+    // user typing and the click landing.
+    const dest = (input?.value ?? routeDestCache[cameraId] ?? '').trim();
+    if (!dest) {
+        // Silently returning here looked like a broken button.
+        input?.focus();
+        if (input) {
+            input.placeholder = 'Enter a destination first…';
+            input.style.borderColor = '#e94560';
+            setTimeout(() => {
+                input.placeholder = 'Enter destination…';
+                input.style.borderColor = '#ddd';
+            }, 2000);
+        }
+        return;
+    }
     window.open(
         `https://www.google.com/maps/dir/?api=1&origin=${lat},${lng}&destination=${encodeURIComponent(dest)}&avoid=congestion`,
         '_blank'
@@ -885,6 +1369,7 @@ async function poll() {
 
 async function init() {
     await fetchCameras();
+    buildCameraStrip();
     fetchTraffic();     // initial HTTP fetch while WS handshakes
     connectWS();        // live updates via WebSocket
     poll();

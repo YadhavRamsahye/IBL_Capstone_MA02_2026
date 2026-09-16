@@ -1,14 +1,16 @@
 """
-Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Author : Sahil Singh Rughoo (22414560) - Tech Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import statistics
 import subprocess
+import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -18,25 +20,106 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from detection import direction
+from detection import severity as severity_mod
+from detection.severity import VEHICLE_CLASSES, classify, pcu_total
+from detection.stationary_tracker import StationaryTracker
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-VEHICLE_CLASSES: set[int] = {1, 2, 3, 5, 7}  # bicycle, car, motorcycle, bus, truck
-
-SEVERITY_THRESHOLDS = [
-    (30, "bottleneck", "#8b31c7"),
-    (15, "heavy",      "#e94560"),
-    (5,  "moderate",   "#f0883e"),
-    (0,  "free",       "#23c55e"),
-]
-
-MODEL_PATH      = "yolov8m.pt"
-CONF_THRESHOLD  = 0.25   # lowered for night footage (valid detections score lower)
+# ── Detection cost knobs ──────────────────────────────────────────────────────
+# These are the levers that decide how many cameras this machine can sustain.
+# Measured on a 16-core CPU with a 1024x576 stream:
+#
+#   model      imgsz   ms/frame   cameras sustainable at a 2s interval
+#   yolov8m     1280        891      2.2
+#   yolov8m      640        255      7.9
+#   yolov8n      960        103     19.3
+#   yolov8n      640         64     31.1
+#
+# Sustainable cameras ≈ FRAME_INTERVAL / (ms_per_frame / 1000). Exceed it and
+# frame grabs queue up and time out, so more cameras yield *less* data.
+# Configurable so the trade-off can be tuned without editing code; see
+# tools/tune_detection.py for a recommendation based on your camera count.
+MODEL_PATH      = os.getenv("YOLO_MODEL", "yolov8m.pt")
+CONF_THRESHOLD  = float(os.getenv("YOLO_CONF", "0.25"))   # lowered for night footage
 IOU_THRESHOLD   = 0.35   # looser NMS so queued/overlapping cars aren't merged
-IMGSZ           = 1280   # stream is 1024x576 — upscale gives more detail for small vehicles
+# Note the stream is 1024x576, so 1280 *upscales* it. That buys detail on small
+# distant vehicles at roughly 3.5x the cost of 640.
+IMGSZ           = int(os.getenv("YOLO_IMGSZ", "1280"))
 SMOOTH_WINDOW   = 3      # smaller window = more responsive at 0.5 fps
-FRAME_INTERVAL  = 2.0               # seconds between frame grabs (= 1 / 0.5 fps)
-SINGLE_FRAME_TIMEOUT = 20           # subprocess timeout for one frame grab (seconds)
+FRAME_INTERVAL  = float(os.getenv("FRAME_INTERVAL", "2.0"))  # seconds between grabs
+
+# Bounds how many YOLO inferences run at once. Each prediction is already
+# multi-threaded, so letting every camera predict simultaneously makes the
+# threads fight for cores and slows all of them down. Defaults to a quarter of
+# the cores, minimum 2.
+MAX_CONCURRENT_INFERENCE = int(
+    os.getenv("MAX_CONCURRENT_INFERENCE", str(max(2, (os.cpu_count() or 4) // 4)))
+)
+_inference_slots = threading.Semaphore(MAX_CONCURRENT_INFERENCE)
+
+# One model instance shared by every camera. This used to be constructed inside
+# run_hls_pipeline, so each camera held its own copy - 38 cameras meant 38 model
+# loads and 38x the memory for identical weights.
+_model_cache: dict[str, YOLO] = {}
+_model_lock = threading.Lock()
+
+# ── Latest-frame store (live camera view) ───────────────────────────────────
+# One annotated JPEG per camera, overwritten every detection cycle - in memory
+# only, never written to disk. The repo lives in a synced OneDrive folder, and
+# a per-second file per camera there would be a mess of churn for OneDrive to
+# fight with. Bounded by design: exactly one entry per active camera.
+_FRAME_WIDTH        = int(os.getenv("FRAME_JPEG_WIDTH", "480"))
+_FRAME_JPEG_QUALITY = int(os.getenv("FRAME_JPEG_QUALITY", "70"))
+
+_latest_frames: dict[str, tuple[bytes, datetime]] = {}
+_frames_lock = threading.Lock()
+
+
+def get_latest_frame(camera_id: str) -> tuple[bytes, datetime] | None:
+    """Return (jpeg_bytes, captured_at_utc) for camera_id, or None if none yet."""
+    with _frames_lock:
+        return _latest_frames.get(camera_id)
+
+
+def _store_annotated_frame(
+    camera_id: str,
+    frame: np.ndarray,
+    boxes: list,
+    classes: list,
+) -> None:
+    """Draw detection boxes on *frame*, downscale, JPEG-encode, and cache it.
+
+    Reuses the boxes/classes already computed for counting - no extra
+    inference, just drawing and encoding.
+    """
+    annotated = frame.copy()
+    for (x1, y1, x2, y2), cls_id in zip(boxes, classes):
+        cv2.rectangle(
+            annotated, (int(x1), int(y1)), (int(x2), int(y2)), (0, 220, 0), 2
+        )
+
+    h, w = annotated.shape[:2]
+    if w > _FRAME_WIDTH:
+        scale = _FRAME_WIDTH / w
+        annotated = cv2.resize(
+            annotated, (_FRAME_WIDTH, int(h * scale)), interpolation=cv2.INTER_AREA
+        )
+
+    ok, buf = cv2.imencode(
+        ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, _FRAME_JPEG_QUALITY]
+    )
+    if not ok:
+        logger.warning("[%s] JPEG encode failed - skipping frame cache update.", camera_id)
+        return
+
+    with _frames_lock:
+        _latest_frames[camera_id] = (buf.tobytes(), datetime.now(timezone.utc))
+
+
+SINGLE_FRAME_TIMEOUT = int(os.getenv("FRAME_TIMEOUT", "20"))
 MAX_CONSECUTIVE_FAILURES = 5        # consecutive None grabs before raising to retry loop
 MAX_RETRIES     = 3                 # outer retry attempts before generator exhausts
 RETRY_DELAY     = 10                # seconds between outer retry attempts
@@ -44,14 +127,17 @@ DEFAULT_WIDTH   = 1280
 DEFAULT_HEIGHT  = 720
 
 
+def get_model(path: str = None) -> YOLO:
+    """Return the shared YOLO instance for *path*, loading it once."""
+    path = path or MODEL_PATH
+    with _model_lock:
+        if path not in _model_cache:
+            logger.info("Loading YOLO model %r (shared across all cameras) …", path)
+            _model_cache[path] = YOLO(path)
+        return _model_cache[path]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _classify(count: int) -> tuple[str, str]:
-    for threshold, severity, color in SEVERITY_THRESHOLDS:
-        if count >= threshold:
-            return severity, color
-    return "free", "#23c55e"
-
 
 def _ffmpeg_available() -> bool:
     try:
@@ -143,11 +229,27 @@ def _detect_loop(
     the outer retry loop in run_hls_pipeline can reconnect / back off.
     """
     count_window: deque[int] = deque(maxlen=SMOOTH_WINDOW)
-    prev_centers: list = []
+    pcu_window: deque[float] = deque(maxlen=SMOOTH_WINDOW)
+    tracker = StationaryTracker(frame_interval=FRAME_INTERVAL)
     consecutive_failures = 0
+
+    # Real loop cadence, measured rather than assumed. FRAME_INTERVAL=2.0s is
+    # a target, not a guarantee: grab+inference alone was measured at ~2.3s on
+    # this deployment (2026-08-07 incident-detection audit), already exceeding
+    # the nominal interval, so "sleep the remainder" below contributes ~0 most
+    # iterations. StationaryTracker converts STALL_SECONDS_REQUIRED into a
+    # frame count using frame_interval - if that's wrong, so is the real-world
+    # wait, so it's kept current from a rolling median of actual loop starts
+    # rather than left at the nominal constant.
+    cadence_window: deque[float] = deque(maxlen=10)
+    prev_t_start: float | None = None
 
     while True:
         t_start = time.perf_counter()
+        if prev_t_start is not None:
+            cadence_window.append(t_start - prev_t_start)
+            tracker.frame_interval = statistics.median(cadence_window)
+        prev_t_start = t_start
 
         frame = _grab_single_frame(hls_urls, width, height)
 
@@ -160,8 +262,13 @@ def _detect_loop(
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 raise RuntimeError(
                     f"[{camera_id}] {MAX_CONSECUTIVE_FAILURES} consecutive frame grabs "
-                    "failed — stream appears unavailable."
+                    "failed - stream appears unavailable."
                 )
+            # A missed grab gets the same per-track grace period as a frame
+            # that was grabbed but produced no matching detection, rather than
+            # wiping every track's progress outright - see
+            # StationaryTracker.mark_missed().
+            tracker.mark_missed()
             time.sleep(FRAME_INTERVAL)
             continue
 
@@ -179,18 +286,20 @@ def _detect_loop(
         frame = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
 
         # ── YOLO inference ────────────────────────────────────────────────────
-        results = model.predict(
-            source  = frame,
-            conf    = CONF_THRESHOLD,
-            iou     = IOU_THRESHOLD,
-            imgsz   = IMGSZ,
-            device  = device,
-            verbose = False,
-            stream  = False,
-        )
+        with _inference_slots:
+            results = model.predict(
+                source  = frame,
+                conf    = CONF_THRESHOLD,
+                iou     = IOU_THRESHOLD,
+                imgsz   = IMGSZ,
+                device  = device,
+                verbose = False,
+                stream  = False,
+            )
 
         raw_count: int = 0
         vehicle_boxes: list = []
+        vehicle_classes: list[int] = []
         for r in results:
             if r.boxes is None:
                 continue
@@ -200,40 +309,63 @@ def _detect_loop(
                 if int(cls_id) in VEHICLE_CLASSES:
                     raw_count += 1
                     vehicle_boxes.append(xyxy_list[i])
+                    vehicle_classes.append(int(cls_id))
 
-        # Rolling-median smoothing
+        _store_annotated_frame(camera_id, frame, vehicle_boxes, vehicle_classes)
+
+        # Rolling-median smoothing on both the raw count and the PCU load. PCU
+        # is what drives severity: a bus occupies roughly 3 cars' worth of road,
+        # so weighting by vehicle type reflects actual demand rather than
+        # treating a bicycle and a truck as equivalent.
+        raw_pcu = pcu_total(vehicle_classes)
         count_window.append(raw_count)
+        pcu_window.append(raw_pcu)
         vehicle_count = int(round(statistics.median(count_window)))
-        severity, color = _classify(vehicle_count)
+        pcu = float(statistics.median(pcu_window))
+        # Severity is saturation (PCU / this camera's capacity), so cameras with
+        # different fields of view are directly comparable.
+        severity, color, saturation = classify(pcu, camera_id)
 
-        # ── Per-frame incident signals ─────────────────────────────────────────
-        frame_area        = width * height
-        possible_incident = any(
-            (b[2] - b[0]) * (b[3] - b[1]) > 0.25 * frame_area
-            for b in vehicle_boxes
+        # ── Incident signal ───────────────────────────────────────────────────
+        # Tracked and time-persistent: a vehicle must be held stationary across
+        # many frames before this reports anything. The previous per-frame
+        # heuristics (large box / nearest-any-centre) are gone - see the module
+        # docstring in detection/stationary_tracker.py for why they fired on
+        # ordinary traffic.
+        verdict = tracker.update(vehicle_boxes, vehicle_classes)
+
+        # ── Per-direction breakdown ───────────────────────────────────────────
+        # Reuses the tracker's association, so no second pass over the boxes.
+        # An uncalibrated camera yields a single "combined" direction, which is
+        # identical to the previous behaviour.
+        by_direction = severity_mod.classify_directional(
+            camera_id, direction.classify(camera_id, tracker.visible_tracks())
         )
-        current_centers = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in vehicle_boxes]
-        if not possible_incident and len(current_centers) >= 5 and prev_centers:
-            stationary = sum(
-                1 for cx, cy in current_centers
-                if any(abs(cx - px) < 10 and abs(cy - py) < 10 for px, py in prev_centers)
+        if direction.is_two_way(camera_id):
+            # Headline severity is the worst direction: a road with one side
+            # gridlocked must not read as "moderate" because the other side is
+            # clear. The aggregate count stays whole-frame.
+            severity = severity_mod.worst_severity(
+                d["severity"] for d in by_direction.values()
             )
-            if stationary / len(current_centers) > 0.70:
-                possible_incident = True
-        prev_centers = current_centers
+            color = severity_mod.colour_for(severity)
 
         elapsed       = time.perf_counter() - t_start
         fps_processed = round(1.0 / max(elapsed, 1e-6), 2)
 
         yield {
-            "camera_id":         camera_id,
-            "timestamp":         datetime.now(timezone.utc).isoformat(),
-            "vehicle_count":     vehicle_count,
-            "severity":          severity,
-            "color":             color,
-            "fps_processed":     fps_processed,
-            "frame_shape":       [height, width],
-            "possible_incident": possible_incident,
+            "camera_id":          camera_id,
+            "timestamp":          datetime.now(timezone.utc).isoformat(),
+            "vehicle_count":      vehicle_count,
+            "pcu":                round(pcu, 2),
+            "saturation":         round(saturation, 3),
+            "severity":           severity,
+            "color":              color,
+            "fps_processed":      fps_processed,
+            "frame_shape":        [height, width],
+            "directions":         by_direction,
+            "possible_incident":  verdict.is_incident,
+            "incident_detail":    verdict.to_dict(),
         }
 
         # Sleep the remainder of the frame interval so YOLO time is included
@@ -251,7 +383,7 @@ def run_hls_pipeline(
 
     if not _ffmpeg_available():
         logger.error(
-            "[%s] ffmpeg not found on PATH — cannot run HLS pipeline.\n"
+            "[%s] ffmpeg not found on PATH - cannot run HLS pipeline.\n"
             "  Install: https://www.gyan.dev/ffmpeg/builds/\n"
             "  Verify:  ffmpeg -version",
             camera_id,
@@ -259,7 +391,8 @@ def run_hls_pipeline(
         return   # caller handles fallback
 
     logger.info("[%s] Loading YOLOv8 model %r …", camera_id, MODEL_PATH)
-    model = YOLO(MODEL_PATH)
+    # Shared instance - see get_model(). Loading per camera meant 38 copies.
+    model = get_model()
     try:
         import torch
         _device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -278,7 +411,7 @@ def run_hls_pipeline(
             )
             yield from _detect_loop(model, hls_urls, camera_id, width, height, device=_device)
             logger.info("[%s] Detection loop ended cleanly.", camera_id)
-            break   # clean exit — don't retry
+            break   # clean exit - don't retry
 
         except Exception as exc:
             logger.error("[%s] Detection loop error: %s", camera_id, exc)

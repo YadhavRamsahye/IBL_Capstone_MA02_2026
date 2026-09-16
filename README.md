@@ -1,45 +1,58 @@
-**Edit a file, create a new file, and clone from Bitbucket in under 2 minutes**
+# IBL Group - Traffic Bottleneck Detection System
 
-When you're done, you can delete the content in this README and update the file with details for others getting started with your repository.
+Real-time traffic monitoring dashboard for Mauritius, built for IBL Group as a Curtin Mauritius Capstone Computing Project. The system pulls live HLS camera feeds from the MYT Traffic Watch network, runs YOLOv8 vehicle detection on each stream, classifies congestion severity, detects incidents (sudden congestion, road blockages, rapid buildup), and surfaces it all on a live map dashboard with AI-generated traffic summaries.
 
-*We recommend that you open this README in another tab as you perform the tasks below. You can [watch our video](https://youtu.be/0ocf7u76WSo) for a full demo of all the steps in this tutorial. Open the video in a new tab to avoid leaving Bitbucket.*
+## Tech stack
 
----
+- **Backend:** FastAPI + Uvicorn (ASGI), Jinja2 templates
+- **Detection:** Ultralytics YOLOv8 + OpenCV, with an FFmpeg reconnect-per-frame pipeline for HLS streams
+- **Database:** PostgreSQL via SQLAlchemy (async) + asyncpg; bcrypt for password hashing
+- **AI summaries:** Anthropic Claude or Google Gemini (`SUMMARY_PROVIDER` env var), with a template-based fallback that requires no API key
+- **Auth:** Session-based login (`itsdangerous`/Starlette `SessionMiddleware`), backed by a PostgreSQL `users` table
 
-## Edit a file
+## Prerequisites
 
-You’ll start by editing this README file to learn how to edit a file in Bitbucket.
+- Python 3.10+ (verified working on 3.14.6; also compatible with 3.12)
+- [FFmpeg and ffprobe](https://www.gyan.dev/ffmpeg/builds/) on PATH - required for HLS stream validation and frame grabs
+- PostgreSQL 17 (`winget install PostgreSQL.PostgreSQL.17` on Windows)
 
-1. Click **Source** on the left side.
-2. Click the README.md link from the list of files.
-3. Click the **Edit** button.
-4. Delete the following text: *Delete this line to make a change to the README from Bitbucket.*
-5. After making your change, click **Commit** and then **Commit** again in the dialog. The commit page will open and you’ll see the change you just made.
-6. Go back to the **Source** page.
+## Setup
 
----
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 
-## Create a file
+copy .env.example .env
+# then fill in ANTHROPIC_API_KEY (or GEMINI_API_KEY) and the DB_* values
 
-Next, you’ll add a new file to this repository.
+python run_schema.py    # creates the database, enums and tables
+python seed_users.py    # seeds the initial accounts
+python check_db.py      # verifies the schema and seed data
+```
 
-1. Click the **New file** button at the top of the **Source** page.
-2. Give the file a filename of **contributors.txt**.
-3. Enter your name in the empty file space.
-4. Click **Commit** and then **Commit** again in the dialog.
-5. Go back to the **Source** page.
+## Running
 
-Before you move on, go ahead and explore the repository. You've already seen the **Source** page, but check out the **Commits**, **Branches**, and **Settings** pages.
+```powershell
+python main.py
+```
 
----
+Serves the dashboard at `http://127.0.0.1:8000`. Without PostgreSQL or an AI provider key configured, the app degrades gracefully - it starts on mock camera data and falls back to template-based traffic summaries rather than failing to start.
 
-## Clone a repository
+## Project structure
 
-Use these steps to clone from SourceTree, our client for using the repository command-line free. Cloning allows you to work on your files locally. If you don't yet have SourceTree, [download and install first](https://www.sourcetreeapp.com/). If you prefer to clone from the command line, see [Clone a repository](https://confluence.atlassian.com/x/4whODQ).
+- `main.py` - FastAPI app, routes, camera task orchestration, WebSocket updates
+- `auth.py` - login/signup wired to PostgreSQL with bcrypt, plus a logged demo-login fallback for when the database is unreachable
+- `database.py` - async SQLAlchemy engine/session setup with graceful degradation if Postgres is offline
+- `detection/` - camera catalogue, HLS/mock/real pipelines, YOLOv8 inference, incident detection, AI summary providers
+- `tools/` - calibration and diagnostic scripts (capacity, direction, camera discovery, Gemini connectivity)
+- `templates/` - dashboard, map, analytics, login/signup pages
+- `TECHNICAL_BRIEFING.md` - detailed architecture and failure-mode reference
 
-1. You’ll see the clone button under the **Source** heading. Click that button.
-2. Now click **Check out in SourceTree**. You may need to create a SourceTree account or log in.
-3. When you see the **Clone New** dialog in SourceTree, update the destination path and name if you’d like to and then click **Clone**.
-4. Open the directory you just created to see your repository’s files.
+## Team
 
-Now that you're more familiar with your Bitbucket repository, go ahead and add a new file locally. You can [push your change back to Bitbucket with SourceTree](https://confluence.atlassian.com/x/iqyBMg), or you can [add, commit,](https://confluence.atlassian.com/x/8QhODQ) and [push from the command line](https://confluence.atlassian.com/x/NQ0zDQ).
+IBL Group - Curtin Mauritius Capstone Computing Project (ISAD3000/ISAD3001)
+
+- Sahil Singh Rughoo (22414560) - Technical Lead
+- Yadhav Sharma Ramsahye (22108355) - Developer
+- Mokshan Mehess (22703417) - Document Lead

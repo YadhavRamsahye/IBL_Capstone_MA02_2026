@@ -15,6 +15,7 @@ Role     : Tech Lead
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - AI Traffic Bottleneck Detection</title>
+    <link rel="icon" type="image/jpeg" href="/static/ibl-logo.jpg">
     <style>
         * {
             margin: 0;
@@ -48,16 +49,13 @@ Role     : Tech Lead
         }
 
         .logo-icon {
-            width: 64px;
-            height: 64px;
-            background: linear-gradient(135deg, #e94560, #0f3460);
+            width: 72px; height: 72px;
+            background: #ffffff; padding: 6px;
             border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 16px;
-            font-size: 28px;
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 16px; overflow: hidden;
         }
+        .logo-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
 
         .logo-area h1 {
             color: #ffffff;
@@ -141,31 +139,6 @@ Role     : Tech Lead
             transform: translateY(0);
         }
 
-        .demo-credentials {
-            margin-top: 24px;
-            padding: 14px;
-            background: rgba(255, 255, 255, 0.04);
-            border-radius: 8px;
-            border: 1px dashed rgba(255, 255, 255, 0.1);
-        }
-
-        .demo-credentials p {
-            color: rgba(255, 255, 255, 0.4);
-            font-size: 12px;
-            text-align: center;
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .demo-credentials code {
-            display: block;
-            color: rgba(255, 255, 255, 0.55);
-            font-size: 12px;
-            text-align: center;
-            line-height: 1.8;
-        }
-
         .success-msg {
             background: rgba(35, 197, 94, 0.15);
             border: 1px solid rgba(35, 197, 94, 0.4);
@@ -198,21 +171,21 @@ Role     : Tech Lead
         }
 
         .signup-link a:hover { text-decoration: underline; }
+
+        @media (max-width: 480px) {
+            body { align-items: flex-start; padding-top: 24px; }
+            .login-container { padding: 32px 20px; margin: 0 16px 24px; border-radius: 12px; }
+        }
     </style>
 </head>
 <body>
     <div class="login-container">
         <div class="logo-area">
             <div class="logo-icon">
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M16 4C9.373 4 4 9.373 4 16s5.373 12 12 12 12-5.373 12-12S22.627 4 16 4z" fill="rgba(255,255,255,0.15)"/>
-                    <circle cx="16" cy="16" r="3" fill="white"/>
-                    <path d="M10 16h3M19 16h3M16 10v3M16 19v3" stroke="white" stroke-width="2" stroke-linecap="round"/>
-                    <path d="M12 12l2 2M18 18l2 2M20 12l-2 2M14 18l-2 2" stroke="rgba(255,255,255,0.6)" stroke-width="1.5" stroke-linecap="round"/>
-                </svg>
+                <img src="/static/ibl-logo.jpg" alt="IBL Group">
             </div>
             <h1>AI Traffic Bottleneck<br>Detection System</h1>
-            <p>Mauritius Road Network Intelligence</p>
+            <p>Mauritius Traffic Intelligence</p>
         </div>
 
         {% if success %}
@@ -235,13 +208,11 @@ Role     : Tech Lead
             <button type="submit" class="login-btn">Sign In</button>
         </form>
 
-        <div class="demo-credentials">
-            <p>Demo Credentials</p>
-            <code>Username: admin &nbsp;|&nbsp; Password: admin123</code>
+        <div class="signup-link" style="margin-top:18px;">
+            <a href="/forgot-password">Forgot your password?</a>
         </div>
-
         <div class="signup-link">Don't have an account? <a href="/signup">Sign up</a></div>
-        <div class="footer-text">IBL Capstone Project &mdash; MA02 2026</div>
+        <div class="footer-text">IBL Capstone Project - MA02 2026</div>
     </div>
 </body>
 </html>

@@ -1,7 +1,7 @@
 """
-Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Author : Sahil Singh Rughoo (22414560) - Tech Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
@@ -14,25 +14,11 @@ from typing import Generator
 import cv2
 from ultralytics import YOLO
 
+from detection.severity import VEHICLE_CLASSES, classify, pcu_total
 
 logger = logging.getLogger(__name__)
 
 
-
-VEHICLE_CLASSES: set[int] = {
-    2,  # car
-    3,  # motorcycle
-    5,  # bus
-    7,  # truck
-}
-
-# Severity thresholds (inclusive lower bound)
-SEVERITY_THRESHOLDS = [
-    (30, "bottleneck", "#8b31c7"),
-    (15, "heavy",      "#e94560"),
-    (5,  "moderate",   "#f0883e"),
-    (0,  "free",       "#23c55e"),
-]
 
 TARGET_FPS = 15          # desired read rate
 FRAME_SKIP = 2           # process every Nth frame (skip N-1 between processed)
@@ -42,14 +28,6 @@ RECONNECT_DELAY = 5      # seconds between retries
 MODEL_PATH = "yolov8n.pt"  # downloaded automatically on first run
 
 
-
-
-def _classify(vehicle_count: int) -> tuple[str, str]:
-    """Return (severity, color) for a given vehicle count."""
-    for threshold, severity, color in SEVERITY_THRESHOLDS:
-        if vehicle_count >= threshold:
-            return severity, color
-    return "free", "#23c55e"
 
 
 def _open_capture(source: str) -> cv2.VideoCapture:
@@ -101,15 +79,17 @@ def _detect_loop(
         )
 
         vehicle_count = 0
+        vehicle_classes: list[int] = []
         for r in results:
             if r.boxes is None:
                 continue
             for cls_id in r.boxes.cls.tolist():
                 if int(cls_id) in VEHICLE_CLASSES:
                     vehicle_count += 1
+                    vehicle_classes.append(int(cls_id))
 
-        
-        severity, color = _classify(vehicle_count)
+        pcu = pcu_total(vehicle_classes)
+        severity, color, saturation = classify(pcu, camera_id)
 
         
         now = time.perf_counter()
@@ -122,6 +102,8 @@ def _detect_loop(
             "camera_id":     camera_id,
             "timestamp":     datetime.now(timezone.utc).isoformat(),
             "vehicle_count": vehicle_count,
+            "pcu":           round(pcu, 2),
+            "saturation":    round(saturation, 3),
             "severity":      severity,
             "color":         color,
             "fps_processed": fps_processed,

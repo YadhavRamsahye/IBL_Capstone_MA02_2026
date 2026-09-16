@@ -1,72 +1,86 @@
 """
-Author : Sahil Singh Rughoo (22414560) — Tech Lead
+Author : Sahil Singh Rughoo (22414560) - Tech Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System traffic summaries
+Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 import time
 
+from detection.camera_catalogue import CAMERAS as CATALOGUE
+
 logger = logging.getLogger(__name__)
 
-# ── Hardcoded camera catalogue ────────────────────────────────────────────────
-# Use stable playlist.m3u8 paths; chunklist URLs rotate and should only be
-# tried as a last-resort fallback.
 
-MYT_CAMERAS: list[dict] = [
-    {
-        "camera_id":   "caudan_north",
-        "name":        "Caudan North — Port Louis",
-        "lat":         -20.1626,
-        "lng":          57.4939,
-        "stream_base": "https://stream.myt.mu/rh/prod/CAUDAN_NORTH.stream_720p",
-        "origin":      "myt.trafficwatch",
-        "_chunklist_fallback": "https://stream.myt.mu/rh/prod/CAUDAN_NORTH.stream_720p/chunklist_w998681874.m3u8",
-    },
-    {
-        "camera_id":   "caudan_south",
-        "name":        "Caudan South — Port Louis",
-        "lat":         -20.1640,
-        "lng":          57.4945,
-        "stream_base": "https://stream.myt.mu/prod/CAUDAN_SOUTH.stream_720p",
-        "origin":      "myt.trafficwatch",
-        "_chunklist_fallback": "https://stream.myt.mu/prod/CAUDAN_SOUTH.stream_720p/chunklist_w674657069.m3u8",
-    },
-    {
-        "camera_id":       "la_chaussee",
-        "name":            "La Chaussee Street — Port Louis",
-        "lat":             -20.1608,
-        "lng":              57.4972,
-        "stream_base":     "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p",
-        "source_override": "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist.m3u8",
-        "url_candidates": [
-            "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist.m3u8",
-            "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/playlist.m3u8",
-            "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist_w228974167.m3u8",
-        ],
-        "origin":          "myt.trafficwatch",
-        "_chunklist_fallback": "https://stream.myt.mu/prod/LA_CHAUSSEE_STREET.stream_720p/chunklist_w228974167.m3u8",
-    },
-    {
-        "camera_id":   "casernes",
-        "name":        "Casernes / Brabant Street — Port Louis",
-        "lat":         -20.1590,
-        "lng":          57.4960,
-        "stream_base": "https://stream.myt.mu/prod/CASERNES_BRABANT_STREET.stream_720p",
-        "origin":      "myt.trafficwatch",
-        "_chunklist_fallback": "https://stream.myt.mu/prod/CASERNES_BRABANT_STREET.stream_720p/chunklist_w1553997703.m3u8",
-    },
-]
+def _active_camera_ids() -> set[str] | None:
+    """Camera ids to actually run detection on, or None for all.
+
+    MYT publishes 38 cameras but each one costs an ffmpeg subprocess plus a
+    YOLOv8m inference every FRAME_INTERVAL seconds. On CPU-only inference,
+    running all of them saturates the machine and produces *worse* data than a
+    handful - frame grabs start timing out. So the catalogue is complete while
+    what gets processed is capped, and the cap is configuration rather than a
+    code edit:
+
+        ACTIVE_CAMERAS=caudan_north,caudan_south      # explicit list
+        ACTIVE_CAMERAS=all                            # everything (needs a GPU)
+
+    Unset defaults to DEFAULT_ACTIVE below.
+    """
+    raw = os.environ.get("ACTIVE_CAMERAS", "").strip()
+    if not raw:
+        return set(DEFAULT_ACTIVE)
+    if raw.lower() == "all":
+        return None
+    return {c.strip() for c in raw.split(",") if c.strip()}
+
+
+# Detection defaults to the four cameras with hand-verified coordinates and
+# calibrated capacities - the set this project has actually been validated on.
+DEFAULT_ACTIVE: tuple[str, ...] = (
+    "caudan_north", "caudan_south", "la_chaussee", "casernes",
+)
+
+# ── Camera catalogue ──────────────────────────────────────────────────────────
+# The full island-wide list lives in detection/camera_catalogue.py, generated
+# from MYT's page by tools/fetch_cameras.py. This module previously carried four
+# hand-written entries covering only central Port Louis.
+#
+# MYT_CAMERAS is the subset detection actually runs on - see _active_camera_ids.
+# CAUDAN_NORTH is served from /rh/prod rather than /prod; the catalogue records
+# each camera's real sourceURL so that stays correct without a special case here.
+
+def _build_active() -> list[dict]:
+    wanted = _active_camera_ids()
+    cams = [dict(c) for c in CATALOGUE
+            if wanted is None or c["camera_id"] in wanted]
+    for cam in cams:
+        # discover_cameras() probes stream_base + a URL suffix; the catalogue
+        # stores the full playlist URL, so derive the base from it.
+        cam["stream_base"] = re.sub(r"/[^/]+\.m3u8$", "", cam["source"])
+    if wanted is not None:
+        missing = wanted - {c["camera_id"] for c in cams}
+        if missing:
+            logger.warning(
+                "[trafficwatch] ACTIVE_CAMERAS names unknown camera(s): %s. "
+                "Known ids are in detection/camera_catalogue.py.",
+                ", ".join(sorted(missing)),
+            )
+    return cams
+
+
+MYT_CAMERAS: list[dict] = _build_active()
 
 FALLBACK_CAMERAS: list[dict] = [
     {
         "camera_id":   "tw_fallback_1",
-        "name":        "Fallback — check myt.mu/trafficwatch manually",
+        "name":        "Fallback - check myt.mu/trafficwatch manually",
         "source":      "mock",
         "stream_base": "",
         "origin":      "fallback",
@@ -74,7 +88,7 @@ FALLBACK_CAMERAS: list[dict] = [
     }
 ]
 
-FFPROBE_TIMEOUT = 15  # seconds per URL probe — Wowza needs more time to respond
+FFPROBE_TIMEOUT = 15  # seconds per URL probe - Wowza needs more time to respond
 
 MYT_PAGE = "https://www.myt.mu/sinformer/trafficwatch/"
 
@@ -83,12 +97,12 @@ def _scrape_live_urls() -> dict[str, str]:
     """
     Fetch the MYT traffic watch page and extract live .m3u8 URLs.
     Returns a dict mapping camera_id → url for any streams found.
-    Silently returns {} on any error — scraping is best-effort.
+    Silently returns {} on any error - scraping is best-effort.
     """
     try:
         import requests
     except ImportError:
-        logger.warning("[trafficwatch] requests not installed — skipping live URL scrape.")
+        logger.warning("[trafficwatch] requests not installed - skipping live URL scrape.")
         return {}
 
     logger.info("[trafficwatch] Scraping live URLs from %s …", MYT_PAGE)
@@ -123,11 +137,13 @@ def _scrape_live_urls() -> dict[str, str]:
     logger.info("[trafficwatch] Found %d .m3u8 URL(s) on MYT page.", len(raw_urls))
 
     # Match scraped URLs to known camera IDs by stream name keywords
+    # Derived from the catalogue so every camera can be matched, not just the
+    # four this map used to hardcode.
     keyword_map = {
-        "CAUDAN_NORTH":          "caudan_north",
-        "CAUDAN_SOUTH":          "caudan_south",
-        "LA_CHAUSSEE":           "la_chaussee",
-        "CASERNES":              "casernes",
+        re.search(r"/([A-Za-z0-9_]+)\.stream", c["source"]).group(1).upper():
+            c["camera_id"]
+        for c in MYT_CAMERAS
+        if re.search(r"/([A-Za-z0-9_]+)\.stream", c["source"])
     }
     matched: dict[str, str] = {}
     for url in raw_urls:
@@ -192,10 +208,10 @@ def _resolve_source(
     scraped: dict[str, str] | None = None,
 ) -> tuple[str, bool]:
 
-    # Fast path: camera has a known-good URL — skip all probing.
+    # Fast path: camera has a known-good URL - skip all probing.
     if "source_override" in cam:
         url = cam["source_override"]
-        logger.info("  [%s] source_override set — using %s (unvalidated)", cam["camera_id"], url)
+        logger.info("  [%s] source_override set - using %s (unvalidated)", cam["camera_id"], url)
         return url, False
 
     base = cam["stream_base"]
@@ -217,7 +233,7 @@ def _resolve_source(
 
     if not ffprobe_ok:
         primary = candidates[0]
-        logger.info("  [%s] ffprobe unavailable — using %s (unvalidated)", cid, primary)
+        logger.info("  [%s] ffprobe unavailable - using %s (unvalidated)", cid, primary)
         return primary, False
 
     for url in candidates:
@@ -227,37 +243,28 @@ def _resolve_source(
             return url, True
         logger.info("  [%s] → no video streams", cid)
 
-    # All candidates failed — still return primary so the pipeline can try anyway
-    logger.warning("  [%s] All candidates failed ffprobe — returning primary unvalidated.", cid)
+    # All candidates failed - still return primary so the pipeline can try anyway
+    logger.warning("  [%s] All candidates failed ffprobe - returning primary unvalidated.", cid)
     return candidates[0], False
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def discover_cameras() -> list[dict]:
-    """
-    Build and validate the MYT Traffic Watch camera list.
 
-    Validation uses ffprobe (5 s timeout per URL).  If ffprobe is not
-    installed, all cameras are returned unvalidated — the HLS pipeline
-    will attempt them anyway and fall back to mock on failure.
-
-    Never returns an empty list; falls back to FALLBACK_CAMERAS only if
-    MYT_CAMERAS itself is somehow empty (defensive guard).
-    """
     logger.info("=" * 62)
-    logger.info("[trafficwatch] MYT Traffic Watch — camera discovery")
+    logger.info("[trafficwatch] MYT Traffic Watch - camera discovery")
     logger.info("  Source: https://www.myt.mu/sinformer/trafficwatch/")
     logger.info("=" * 62)
 
     if not MYT_CAMERAS:
-        logger.error("[trafficwatch] MYT_CAMERAS list is empty — returning fallback.")
+        logger.error("[trafficwatch] MYT_CAMERAS list is empty - returning fallback.")
         return FALLBACK_CAMERAS
 
     # Check ffprobe once for all cameras
     ffprobe_ok = _ffprobe_available()
     if ffprobe_ok:
-        logger.info("[trafficwatch] ffprobe detected — will validate each stream URL.")
+        logger.info("[trafficwatch] ffprobe detected - will validate each stream URL.")
     else:
         logger.warning(
             "[trafficwatch] ffprobe not found on PATH.\n"
@@ -289,7 +296,7 @@ def discover_cameras() -> list[dict]:
     # If ffprobe found nothing, scrape live URLs and retry unvalidated cameras
     if ffprobe_ok and n_validated == 0:
         logger.warning(
-            "[trafficwatch] All %d stream(s) failed ffprobe — scraping MYT page for fresh URLs.",
+            "[trafficwatch] All %d stream(s) failed ffprobe - scraping MYT page for fresh URLs.",
             len(MYT_CAMERAS),
         )
         scraped = _scrape_live_urls()
@@ -311,7 +318,7 @@ def discover_cameras() -> list[dict]:
             n_validated = sum(1 for c in cameras if c["validated"])
 
     logger.info(
-        "[trafficwatch] Discovery complete — %d camera(s), %d validated.",
+        "[trafficwatch] Discovery complete - %d camera(s), %d validated.",
         len(cameras), n_validated,
     )
     return cameras

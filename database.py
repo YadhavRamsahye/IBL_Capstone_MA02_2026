@@ -1,7 +1,7 @@
 """
-Author : Mokshan Mehess (22703417) — Document Lead
+Author : Mokshan Mehess (22703417) - Document Lead
 Unit   : ISAD3000 Capstone Computing Project 1
-Team   : IBL Group — Traffic Bottleneck Detection System
+Team   : IBL Group - Traffic Bottleneck Detection System
 """
 
 from __future__ import annotations
@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 HOST     = os.getenv("DB_HOST",     "localhost")
 PORT     = int(os.getenv("DB_PORT", "5432"))
 USER     = os.getenv("DB_USER",     "postgres")
-PASSWORD = os.getenv("DB_PASSWORD", "tqu9vfds")
-DB_NAME  = os.getenv("DB_NAME",     "TrafficSystem")
+# No default: the password used to be hardcoded here, which put a real
+# credential into git history. It must come from the environment.
+PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME  = os.getenv("DB_NAME",     "trafficsystem")
 
 DATABASE_URL = f"postgresql+asyncpg://{USER}:{PASSWORD}@{HOST}:{PORT}/{DB_NAME}"
 
@@ -34,9 +36,14 @@ def _postgres_reachable() -> bool:
         return False
 
 
-if not _postgres_reachable():
+if not PASSWORD:
     logger.warning(
-        "[db] PostgreSQL not reachable at %s:%d — starting without persistence. "
+        "[db] DB_PASSWORD is not set - starting without persistence. "
+        "Add DB_PASSWORD to your .env file to enable the database."
+    )
+elif not _postgres_reachable():
+    logger.warning(
+        "[db] PostgreSQL not reachable at %s:%d - starting without persistence. "
         "Set DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME to connect.",
         HOST, PORT,
     )
@@ -58,4 +65,4 @@ else:
         DB_AVAILABLE = True
         logger.info("[db] Engine ready → %s:%d/%s", HOST, PORT, DB_NAME)
     except Exception as exc:
-        logger.warning("[db] SQLAlchemy setup failed — starting without persistence: %s", exc)
+        logger.warning("[db] SQLAlchemy setup failed - starting without persistence: %s", exc)

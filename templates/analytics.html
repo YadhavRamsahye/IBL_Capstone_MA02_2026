@@ -15,6 +15,7 @@ Role     : Tech Lead
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Analytics - AI Traffic Detection</title>
+    <link rel="icon" type="image/jpeg" href="/static/ibl-logo.jpg">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -29,15 +30,23 @@ Role     : Tech Lead
             padding: 0 24px; height: 56px;
             display: flex; align-items: center; justify-content: space-between;
         }
-        .navbar-brand { display: flex; align-items: center; gap: 10px; }
+        .navbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
         .nav-icon {
-            width: 36px; height: 36px;
-            background: linear-gradient(135deg, #e94560, #0f3460);
+            width: 36px; height: 36px; flex-shrink: 0;
+            background: #ffffff; padding: 3px;
             border-radius: 8px; display: flex; align-items: center; justify-content: center;
+            overflow: hidden;
         }
-        .brand-title { font-size: 16px; font-weight: 600; }
+        .nav-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        /* Truncate rather than wrap - the navbar is a fixed 56px, so a wrapped
+           title is clipped instead of just being long. */
+        .brand-title {
+            font-size: 16px; font-weight: 600;
+            white-space: nowrap; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis;
+        }
         .brand-accent { color: #e94560; }
-        .navbar-right { display: flex; align-items: center; gap: 14px; }
+        .navbar-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
         .nav-link {
             color: rgba(230,237,243,.6); font-size: 13px; text-decoration: none;
             padding: 6px 12px; border-radius: 6px; transition: background .2s, color .2s;
@@ -81,10 +90,18 @@ Role     : Tech Lead
             .charts-grid { grid-template-columns: 1fr; }
             .chart-card.full { grid-column: 1; }
         }
+        @media (max-width: 640px) {
+            .navbar { padding: 0 12px; }
+            .brand-title { font-size: 14px; }
+            .nav-link { padding: 6px 8px; font-size: 12px; }
+            .logout-btn { padding: 6px 10px; font-size: 12px; }
+        }
         @media (max-width: 480px) {
             .page { padding: 16px 12px; }
             .kpi-row { grid-template-columns: 1fr 1fr; gap: 10px; }
             .kpi-value { font-size: 26px; }
+            .nav-link:not(.active) { display: none; }
+            .page-header h1 { font-size: 18px; }
         }
     </style>
 </head>
@@ -93,13 +110,9 @@ Role     : Tech Lead
 <nav class="navbar">
     <div class="navbar-brand">
         <div class="nav-icon">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <circle cx="10" cy="10" r="7" fill="rgba(255,255,255,0.15)"/>
-                <circle cx="10" cy="10" r="2" fill="white"/>
-                <path d="M6 10h2M12 10h2M10 6v2M10 12v2" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
+            <img src="/static/ibl-logo.jpg" alt="IBL Group">
         </div>
-        <span class="brand-title">Traffic AI &mdash; <span class="brand-accent">Analytics</span></span>
+        <span class="brand-title">Traffic AI - <span class="brand-accent">Analytics</span></span>
     </div>
     <div class="navbar-right">
         <a href="/map"      class="nav-link">Live Map</a>
@@ -111,24 +124,29 @@ Role     : Tech Lead
 <div class="page">
     <div class="page-header">
         <h1>Traffic Analytics</h1>
-        <p>Simulated 24-hour traffic patterns across all monitored locations &mdash; Port Louis, Mauritius</p>
+        <p>Recorded 24-hour traffic patterns from monitored cameras - Port Louis, Mauritius</p>
+        <p id="sampleNote" style="font-size:12px;color:rgba(230,237,243,.35);margin-top:4px;"></p>
     </div>
+
+    <div id="dataBanner" style="display:none;background:rgba(240,136,62,.08);
+        border:1px solid rgba(240,136,62,.35);color:#f0883e;border-radius:8px;
+        padding:12px 16px;font-size:13px;margin-bottom:24px;"></div>
 
     <div class="kpi-row">
         <div class="kpi-card">
-            <div class="kpi-value" style="color:#58a6ff;" id="kpiPeak">—</div>
+            <div class="kpi-value" style="color:#58a6ff;" id="kpiPeak">-</div>
             <div class="kpi-label">Peak Vehicles Detected</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-value" style="color:#f0883e;" id="kpiAvg">—</div>
+            <div class="kpi-value" style="color:#f0883e;" id="kpiAvg">-</div>
             <div class="kpi-label">Avg Vehicles / Hour</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-value" style="color:#e94560;" id="kpiBottlenecks">—</div>
+            <div class="kpi-value" style="color:#e94560;" id="kpiBottlenecks">-</div>
             <div class="kpi-label">Bottleneck Hours</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-value" style="color:#23c55e;" id="kpiFreeFlow">—</div>
+            <div class="kpi-value" style="color:#23c55e;" id="kpiFreeFlow">-</div>
             <div class="kpi-label">Free-Flow Hours</div>
         </div>
     </div>
@@ -136,7 +154,7 @@ Role     : Tech Lead
     <div class="charts-grid">
 
         <div class="chart-card full">
-            <div class="chart-title">Vehicle Count — 24-Hour Trend (All Cameras)</div>
+            <div class="chart-title">Vehicle Count - 24-Hour Trend (All Cameras)</div>
             <div class="chart-sub">Simulated rolling hourly averages per camera</div>
             <div class="chart-wrap tall"><canvas id="chartLine"></canvas></div>
         </div>
@@ -156,60 +174,105 @@ Role     : Tech Lead
     </div>
 </div>
 
-<script>
+<!-- type="module" so the top-level await on /api/analytics/hourly is legal. -->
+<script type="module">
 'use strict';
 
 Chart.defaults.color = 'rgba(230,237,243,0.5)';
 Chart.defaults.borderColor = '#30363d';
 
-const CAMERAS = [
-    { id: 'caudan_north', label: 'Caudan North',    color: '#58a6ff' },
-    { id: 'caudan_south', label: 'Caudan South',    color: '#f0883e' },
-    { id: 'la_chaussee',  label: 'La Chaussee',     color: '#e94560' },
-    { id: 'casernes',     label: 'Casernes / Brabant', color: '#23c55e' },
-];
-
 const HOURS = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2,'0')}:00`);
 
-// Simulate realistic Port Louis rush-hour traffic patterns.
-function simProfile(seed, peak1 = 8, peak2 = 17, base = 4) {
-    return HOURS.map((_, h) => {
-        const morning = base + 28 * Math.exp(-0.5 * ((h - peak1) / 1.5) ** 2);
-        const evening = base + 32 * Math.exp(-0.5 * ((h - peak2) / 1.8) ** 2);
-        const noise   = (Math.sin(seed * h + seed) * 2 + Math.random() * 3);
-        return Math.max(0, Math.round(morning + evening + noise));
-    });
+// Everything below is rendered from /api/analytics/hourly - real recorded
+// snapshots. This page previously generated its own numbers from a Gaussian
+// curve plus Math.random(), so the "measurements" changed on every reload.
+// When there is no recorded data the page says so rather than inventing any.
+function showNoData(reason) {
+    for (const id of ['kpiPeak', 'kpiAvg', 'kpiBottlenecks', 'kpiFreeFlow']) {
+        document.getElementById(id).textContent = '-';
+    }
+    const banner = document.getElementById('dataBanner');
+    banner.textContent = reason || 'No recorded data available yet.';
+    banner.style.display = 'block';
+    for (const id of ['chartLine', 'chartBar', 'chartDoughnut']) {
+        const c = document.getElementById(id);
+        const ctx = c.getContext('2d');
+        ctx.font = '13px Segoe UI, sans-serif';
+        ctx.fillStyle = 'rgba(230,237,243,0.35)';
+        ctx.textAlign = 'center';
+        ctx.fillText('No data recorded yet', c.width / 2, c.height / 2);
+    }
 }
 
-const profiles = CAMERAS.map((cam, i) => simProfile(i + 1, 7 + i * 0.4, 16 + i * 0.6));
+let payload;
+try {
+    const res = await fetch('/api/analytics/hourly?hours=24', { credentials: 'same-origin' });
+    if (res.status === 401) { window.location = '/login'; throw new Error('unauthenticated'); }
+    payload = await res.json();
+} catch (err) {
+    showNoData('Could not reach the analytics endpoint.');
+    throw err;
+}
 
-// KPIs
-const allCounts  = profiles.flat();
-const combined   = HOURS.map((_, h) => profiles.reduce((s, p) => s + p[h], 0));
-const peakVal    = Math.max(...allCounts);
-const avgVal     = Math.round(combined.reduce((a, b) => a + b, 0) / 24);
-const bottleneckHours = combined.filter(v => v >= 30 * CAMERAS.length).length;
-const freeFlowHours   = combined.filter(v => v < 5  * CAMERAS.length).length;
+if (!payload.available) {
+    showNoData(payload.reason);
+    throw new Error('no analytics data');
+}
+
+document.getElementById('dataBanner').style.display = 'none';
+
+// series rows: {camera_id, hour, avg_count, avg_saturation, peak_count, samples}
+const byCamera = {};
+for (const cam of payload.cameras) byCamera[cam] = Array(24).fill(null);
+let peakVal = 0;
+for (const row of payload.series) {
+    byCamera[row.camera_id][row.hour] = Math.round(row.avg_count * 10) / 10;
+    peakVal = Math.max(peakVal, row.peak_count ?? 0);
+}
+
+// Combined per-hour total; null where no camera reported that hour, so gaps
+// stay visible instead of being drawn as zero traffic.
+const combined = HOURS.map((_, h) => {
+    const vals = payload.cameras.map(c => byCamera[c][h]).filter(v => v != null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+});
+const observed = combined.filter(v => v != null);
+const avgVal = observed.length
+    ? Math.round(observed.reduce((a, b) => a + b, 0) / observed.length) : 0;
+
+const sevCounts = {
+    Free:       payload.severity_counts.free       || 0,
+    Moderate:   payload.severity_counts.moderate   || 0,
+    Heavy:      payload.severity_counts.heavy      || 0,
+    Bottleneck: payload.severity_counts.bottleneck || 0,
+};
+const totalSamples = payload.sample_count || 0;
 
 document.getElementById('kpiPeak').textContent        = peakVal;
 document.getElementById('kpiAvg').textContent         = avgVal;
-document.getElementById('kpiBottlenecks').textContent = bottleneckHours;
-document.getElementById('kpiFreeFlow').textContent    = freeFlowHours;
+document.getElementById('kpiBottlenecks').textContent = sevCounts.Bottleneck;
+document.getElementById('kpiFreeFlow').textContent    = sevCounts.Free;
+document.getElementById('sampleNote').textContent =
+    `${totalSamples.toLocaleString()} snapshots over the last ${payload.hours}h ` +
+    `across ${payload.cameras.length} camera(s)`;
+
+const CAM_COLORS = ['#58a6ff', '#f0883e', '#e94560', '#23c55e', '#8b31c7'];
 
 // Line chart
 new Chart(document.getElementById('chartLine'), {
     type: 'line',
     data: {
         labels: HOURS,
-        datasets: CAMERAS.map((cam, i) => ({
-            label:           cam.label,
-            data:            profiles[i],
-            borderColor:     cam.color,
-            backgroundColor: cam.color + '18',
+        datasets: payload.cameras.map((cam, i) => ({
+            label:           cam.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase()),
+            data:            byCamera[cam],
+            borderColor:     CAM_COLORS[i % CAM_COLORS.length],
+            backgroundColor: CAM_COLORS[i % CAM_COLORS.length] + '18',
             borderWidth:     2,
             pointRadius:     2,
             tension:         0.4,
             fill:            false,
+            spanGaps:        false,   // hours with no data stay blank
         })),
     },
     options: {
@@ -233,12 +296,13 @@ new Chart(document.getElementById('chartBar'), {
     data: {
         labels: HOURS,
         datasets: [{
-            label: 'Total Vehicles',
+            label: 'Total Vehicles (mean per hour)',
             data: combined,
             backgroundColor: combined.map(v =>
-                v >= 30 * CAMERAS.length ? '#8b31c7aa' :
-                v >= 15 * CAMERAS.length ? '#e9456088' :
-                v >= 5  * CAMERAS.length ? '#f0883e88' : '#23c55e88'
+                v == null                        ? '#30363d55' :
+                v >= 30 * payload.cameras.length ? '#8b31c7aa' :
+                v >= 15 * payload.cameras.length ? '#e9456088' :
+                v >= 5  * payload.cameras.length ? '#f0883e88' : '#23c55e88'
             ),
             borderRadius: 3,
         }],
@@ -253,15 +317,7 @@ new Chart(document.getElementById('chartBar'), {
     },
 });
 
-// Doughnut chart — severity breakdown across all hours × cameras
-const sevCounts = { Free: 0, Moderate: 0, Heavy: 0, Bottleneck: 0 };
-profiles.flat().forEach(v => {
-    if      (v >= 30) sevCounts.Bottleneck++;
-    else if (v >= 15) sevCounts.Heavy++;
-    else if (v >= 5)  sevCounts.Moderate++;
-    else              sevCounts.Free++;
-});
-
+// Doughnut chart - severity breakdown, counted from recorded snapshots.
 new Chart(document.getElementById('chartDoughnut'), {
     type: 'doughnut',
     data: {
@@ -276,7 +332,10 @@ new Chart(document.getElementById('chartDoughnut'), {
     options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
-            legend: { position: 'right', labels: { boxWidth: 12, padding: 14 } },
+            legend: {
+                position: window.innerWidth < 500 ? 'bottom' : 'right',
+                labels: { boxWidth: 12, padding: 14 },
+            },
         },
         cutout: '65%',
     },
