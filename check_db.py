@@ -33,7 +33,15 @@ DB_NAME  = os.getenv("DB_NAME", "trafficsystem")
 
 EXPECTED_TABLES = {
     "users", "cameras", "traffic_snapshots", "bottleneck_events",
-    "incidents", "alerts", "audit_log",
+    "incidents", "alerts", "audit_log", "password_resets",
+}
+
+# Columns schema.sql adds to tables that already existed (ALTER TABLE ... ADD
+# COLUMN). A table-presence check cannot see these: a database set up before
+# users.email was introduced still has every table, so it passed this check
+# while signup and password recovery both failed on the missing column.
+EXPECTED_COLUMNS = {
+    "users": {"email"},
 }
 
 OK, BAD, INFO = "  [ok]  ", "  [--]  ", "  [i]   "
@@ -105,6 +113,18 @@ async def check() -> None:
                  "    Apply the schema (safe to re-run):\n"
                  "        python run_schema.py")
         print(f"{OK}All {len(EXPECTED_TABLES)} tables present")
+
+        rows = await conn.fetch(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public'")
+        present_cols = {(r["table_name"], r["column_name"]) for r in rows}
+        missing_cols = sorted(f"{t}.{c}" for t, cols in EXPECTED_COLUMNS.items()
+                              for c in cols if (t, c) not in present_cols)
+        if missing_cols:
+            fail("Schema", f"missing column(s): {', '.join(missing_cols)}",
+                 "    Apply the schema (safe to re-run):\n"
+                 "        python run_schema.py")
+        print(f"{OK}Columns added to existing tables present")
 
         # 6 ── admin user seeded -----------------------------------------------
         users = await conn.fetch(
