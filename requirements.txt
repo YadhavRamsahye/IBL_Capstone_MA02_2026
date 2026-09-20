@@ -32,3 +32,4 @@ imageio-ffmpeg
 anthropic
 google-genai      # Gemini backend (SUMMARY_PROVIDER=gemini)
 python-dotenv
+locust            # optional load testing: locust -f locustfile.py

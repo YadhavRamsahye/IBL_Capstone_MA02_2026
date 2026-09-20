@@ -309,6 +309,31 @@ async def _save_incident(inc) -> None:
         )
 
 
+async def _save_alert(alert: dict) -> None:
+    """Persist an alert after ensuring its camera row exists."""
+    if not DB_AVAILABLE or _AsyncSession is None:
+        return
+    try:
+        async with _AsyncSession() as db:
+            await _upsert_camera(db, alert["camera_id"])
+            await db.execute(text("""
+                INSERT INTO alerts
+                    (camera_id, alert_type, severity, message, triggered_at)
+                VALUES (:camera_id, :alert_type, :severity, :message, :triggered_at)
+            """), {
+                "camera_id":   alert["camera_id"],
+                "alert_type":  "manual",
+                "severity":    alert["severity"],
+                "message":     alert["message"],
+                "triggered_at": _as_datetime(alert["timestamp"]),
+            })
+            await db.commit()
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "[db] Alert save failed for %s: %s", alert["camera_id"], exc, exc_info=True
+        )
+
+
 async def _process_detection(camera_id: str, result: dict) -> None:
     """Post-detection hook: run incident detection, generate Claude summaries,
     and auto-trigger alerts.
@@ -1060,6 +1085,7 @@ async def api_alerts_trigger(body: AlertTriggerRequest):
         "source":        ai_summary.source,
     }
     alert_log.append(alert)
+    await _save_alert(alert)
     logger.info("Alert created: %s  camera=%s severity=%s", alert["alert_id"], alert["camera_id"], alert["severity"])
     return alert
 

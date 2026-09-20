@@ -21,6 +21,7 @@ from detection.claude_api import (
     _template_alert_description,
     _camera_display_name,
 )
+from evidence import print_evidence
 
 
 # ── Sample detection data (same format as mock_pipeline.py yields) ────────
@@ -77,13 +78,21 @@ def test_helpers() -> None:
     divider("TEST 1: Helper Functions")
 
     # Camera display name conversion
+    result = _camera_display_name("caudan_north")
+    print_evidence("TC-065", "Camera ID converts to a display name",
+                   "camera_id = 'caudan_north'", "Caudan North", result)
+    assert result == "Caudan North"
     assert _camera_display_name("port_louis") == "Port Louis"
     assert _camera_display_name("grand_baie") == "Grand Baie"
-    assert _camera_display_name("caudan_north") == "Caudan North"
     print("[PASS] _camera_display_name works correctly")
 
     # DetectionData.from_dict
     data = DetectionData.from_dict(SAMPLE_DETECTIONS[0])
+    print_evidence("TC-066", "DetectionData.from_dict parses a raw detection payload",
+                   f"detection = {SAMPLE_DETECTIONS[0]}",
+                   {"camera_id": "port_louis", "vehicle_count": 3, "severity": "free"},
+                   {"camera_id": data.camera_id, "vehicle_count": data.vehicle_count,
+                    "severity": data.severity})
     assert data.camera_id == "port_louis"
     assert data.vehicle_count == 3
     assert data.severity == "free"
