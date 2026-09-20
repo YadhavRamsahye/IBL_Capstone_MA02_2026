@@ -72,7 +72,23 @@ Public API
     verdict.is_incident      -> bool   (confirmed, not "possible")
     verdict.confidence       -> float  0.0-1.0
     verdict.stationary_count -> int
+    verdict.moving_count     -> int    (tracks that moved on this frame)
     verdict.stalled_seconds  -> float
+
+2026-09-20 red-light discriminator
+----------------------------------
+STALL_SECONDS_REQUIRED was cut from 150s to 60s on 2026-08-07 to make the
+feature demonstrable. Mauritius signal cycles run to about 120s, so from that
+moment a long red light satisfied every threshold here and could raise a
+stalled-vehicle incident. Duration cannot separate the two cases, and neither
+can MIN_STATIONARY_VEHICLES or MIN_STATIONARY_FRACTION - a full queue at a
+signal scores better on both than a real stall does.
+
+What does separate them is already in the data: a signal stops the whole queue
+and releases it together, while a breakdown sits still *while other vehicles
+move around it*. MIN_MOVING_VEHICLES adds that as a necessary condition, using
+the same normalised centroid displacement that decides "stationary". See
+tools/incident_harness.py discriminate, which proves both directions.
 """
 
 from __future__ import annotations
@@ -116,6 +132,26 @@ MIN_STATIONARY_VEHICLES = 4
 # beside moving lanes.
 MIN_STATIONARY_FRACTION = 0.70
 
+# Vehicles that must be *moving* in the same frame before a stall is confirmed.
+#
+# Duration alone cannot tell a stalled vehicle from a red light: Mauritius
+# signal cycles run to about 120s and STALL_SECONDS_REQUIRED is 60s, so a long
+# red satisfies every threshold above on its own. What separates them is not
+# how long the stop lasts but what the rest of the frame is doing. A signal
+# stops the whole queue and releases it together; a breakdown sits still while
+# traffic moves around it. So a confirmed stall now requires at least this many
+# tracks to have moved on the most recent frame, measured with the same
+# normalised centroid displacement that decides "stationary" - no second
+# measure, just the other side of the same comparison.
+#
+# 1 rather than a higher number because the evidence is already scarce: after
+# frame deduplication the tracker sees roughly one frame every 10s, and on a
+# quiet road a genuine stall may have only one vehicle passing it. The cost of
+# 1 is that a single creeping vehicle in a stopped queue can satisfy it; the
+# cost of a higher number is silence on exactly the quiet-road breakdown this
+# is meant to catch.
+MIN_MOVING_VEHICLES = 1
+
 # Frames a track may go undetected before being dropped. YOLO flickers on
 # distant/occluded vehicles; without this every flicker would reset the timer.
 MAX_MISSED_FRAMES = 3
@@ -151,6 +187,11 @@ class _Track:
     # gives the vehicle a direction of travel - see detection/direction.py.
     origin: tuple[float, float] = (0.0, 0.0)
     age_frames: int = 0
+    # Whether this vehicle moved when it was last matched - the same
+    # normalised-centroid-displacement test that feeds stationary_frames, kept
+    # per track so a verdict can ask what the *rest* of the frame was doing.
+    # False on a brand-new track: one sighting is not evidence of movement.
+    moving: bool = False
     # COCO class id, carried so per-direction PCU can be computed from the same
     # association rather than re-matching boxes to classes downstream.
     cls_id: int = -1
@@ -172,6 +213,7 @@ class Verdict:
     confidence: float = 0.0
     stationary_count: int = 0
     total_tracked: int = 0
+    moving_count: int = 0
     stalled_seconds: float = 0.0
     reason: str = "insufficient evidence"
 
@@ -181,6 +223,7 @@ class Verdict:
             "confidence":       round(self.confidence, 2),
             "stationary_count": self.stationary_count,
             "total_tracked":    self.total_tracked,
+            "moving_count":     self.moving_count,
             "stalled_seconds":  round(self.stalled_seconds, 1),
             "reason":           self.reason,
         }
@@ -233,8 +276,19 @@ class StationaryTracker:
         Callers are responsible for having already filtered to
         missed_frames == 0 (both `visible_tracks()` and direction.classify's
         grouping do this), so no such filtering happens here.
+
+        Stillness is judged over `tracks`; movement is judged over the whole
+        frame. That distinction matters for the per-direction verdicts: a
+        blocked direction is, by definition, entirely stopped within itself, so
+        looking for movement inside that subset would report nothing for
+        exactly the case per-direction detection exists to catch. What makes a
+        blocked direction credible is that traffic is moving *elsewhere in the
+        frame* - typically the opposite carriageway - which is also what tells
+        it apart from a signal holding the whole road.
         """
+        frame_tracks = self.visible_tracks()
         stationary = [t for t in tracks if t.stationary_frames >= self._frames_required]
+        moving = [t for t in frame_tracks if t.moving]
 
         n_stat, n_vis = len(stationary), len(tracks)
         longest = max((t.stationary_frames for t in stationary), default=0)
@@ -244,8 +298,23 @@ class StationaryTracker:
         verdict = Verdict(
             stationary_count=n_stat,
             total_tracked=n_vis,
+            moving_count=len(moving),
             stalled_seconds=stalled_seconds,
         )
+
+        # Nothing to compare against. A single vehicle holding still is exactly
+        # what a car alone at a red light looks like, and exactly what a
+        # breakdown on an empty road looks like; the two are indistinguishable
+        # from this data, so this reports nothing rather than guessing. Counted
+        # over the frame, not the subset, for the same reason as `moving`
+        # above. Checked before the count threshold so the decision stays
+        # explicit even if MIN_STATIONARY_VEHICLES is ever lowered.
+        if len(frame_tracks) <= 1:
+            verdict.reason = (
+                "only one vehicle tracked - with nothing moving to compare "
+                "against, a stall cannot be told apart from a red light"
+            )
+            return verdict
 
         if n_stat < MIN_STATIONARY_VEHICLES:
             verdict.reason = (
@@ -258,6 +327,18 @@ class StationaryTracker:
             verdict.reason = (
                 f"{fraction:.0%} of traffic stalled (need "
                 f"{MIN_STATIONARY_FRACTION:.0%}) - traffic still flowing"
+            )
+            return verdict
+
+        # The red-light discriminator. Everything above is satisfied just as
+        # well by a queue waiting at a signal, which is why duration alone
+        # produced false stalled-vehicle incidents once the threshold was cut
+        # from 150s to 60s - below Mauritius' ~120s cycle. A stall is only
+        # distinguishable when the rest of the frame disagrees with it.
+        if len(moving) < MIN_MOVING_VEHICLES:
+            verdict.reason = (
+                f"all {len(frame_tracks)} tracked vehicles are stopped "
+                f"together, none moving - a signal cycle looks exactly like this"
             )
             return verdict
 
@@ -274,7 +355,8 @@ class StationaryTracker:
         verdict.is_incident = True
         verdict.reason = (
             f"{n_stat} of {n_vis} vehicles stationary for "
-            f"{stalled_seconds:.0f}s - traffic is stopped, not flowing"
+            f"{stalled_seconds:.0f}s while {len(moving)} other(s) kept moving "
+            f"- stopped traffic, not a signal cycle"
         )
         return verdict
 
@@ -342,10 +424,14 @@ class StationaryTracker:
             diagonal    = math.hypot(best.box[2] - best.box[0], best.box[3] - best.box[1])
             disp_frac   = math.hypot(new_centre[0] - prev_centre[0],
                                      new_centre[1] - prev_centre[1]) / max(1.0, diagonal)
+            moved = disp_frac > STATIONARY_CENTROID_FRAC
             best.stationary_frames = (
-                best.stationary_frames + 1 if disp_frac <= STATIONARY_CENTROID_FRAC
-                else max(0, best.stationary_frames - MISMATCH_PENALTY)
+                max(0, best.stationary_frames - MISMATCH_PENALTY) if moved
+                else best.stationary_frames + 1
             )
+            # Same comparison, kept so _verdict_for_tracks can ask what the
+            # rest of the frame was doing while the candidate sat still.
+            best.moving = moved
             best.box = list(box)
             best.cls_id = cls_id
             best.missed_frames = 0

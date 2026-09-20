@@ -1319,32 +1319,66 @@ async def api_demo_escalate():
 
 
 @app.post("/api/demo/stall", response_class=JSONResponse, dependencies=[Depends(require_admin)])
-async def api_demo_stall(camera_id: str = "caudan_north", frames: int = 80, vehicles: int = 4):
-    """Replay a synthetic held-still vehicle sequence through the real
-    StationaryTracker and the real incident pipeline (this process's live
-    ``incident_detector``, ``_save_incident``, the ``incidents`` table, and
-    /api/incidents/active) - proves the stalled-vehicle chain end-to-end
-    without waiting for a real stall. Diagnostic harness only; see
-    tools/incident_harness.py, which drives this endpoint.
+async def api_demo_stall(camera_id: str = "caudan_north", frames: int = 80,
+                         vehicles: int = 4, moving: int = 1):
+    """Replay a synthetic vehicle sequence through the real StationaryTracker
+    and the real incident pipeline (this process's live ``incident_detector``,
+    ``_save_incident``, the ``incidents`` table, and /api/incidents/active) -
+    proves the stalled-vehicle chain end-to-end without waiting for a real
+    stall. Diagnostic harness only; see tools/incident_harness.py, which drives
+    this endpoint.
 
-    The boxes are static and non-overlapping (150px apart) so IoU-based
+    ``vehicles`` boxes are static and non-overlapping (150px apart) so IoU-based
     frame-to-frame association is unambiguous - this is testing the incident
     pipeline's wiring, not the tracker's association logic.
+
+    ``moving`` adds vehicles that travel, in their own horizontal band so they
+    are never confused with the stopped ones. This is what separates the two
+    cases the discriminator exists to tell apart (see MIN_MOVING_VEHICLES in
+    detection/stationary_tracker.py):
+
+        moving >= 1   a vehicle stopped while traffic flows past  -> confirms
+        moving == 0   everything stopped together, i.e. a red light -> does not
+
+    so the default is 1: with 0 this endpoint no longer confirms anything, by
+    design.
     """
     tracker = StationaryTracker(frame_interval=FRAME_INTERVAL)
-    boxes   = [[100.0 + i * 150, 300.0, 220.0 + i * 150, 420.0] for i in range(vehicles)]
-    classes = [2] * vehicles  # COCO class 2 = car
+    stalled = [[100.0 + i * 150, 300.0, 220.0 + i * 150, 420.0] for i in range(vehicles)]
 
+    # 50px per frame is ~0.3 of the box's diagonal, far above
+    # STATIONARY_CENTROID_FRAC (0.04), so each of these reads as moving; and
+    # consecutive positions still overlap at IoU 0.41, comfortably above
+    # MATCH_IOU (0.30), so each stays the *same* track rather than becoming a
+    # new one every frame. They bounce between bounds rather than wrapping,
+    # because a wrap would break association and leave a frame with nothing
+    # moving in it.
+    step = 50.0
+    move_x = [100.0 + i * 150 for i in range(moving)]
+    move_dir = [1.0] * moving
+
+    replay_key = f"{camera_id}::demo-{uuid.uuid4().hex[:8]}"
     confirmed_at: Optional[int] = None
     incident_ids: list[str] = []
     verdict = None
     for i in range(frames):
+        boxes = [list(b) for b in stalled]
+        boxes += [[x, 600.0, x + 120.0, 720.0] for x in move_x]
+        classes = [2] * len(boxes)  # COCO class 2 = car
+
         verdict = tracker.update(boxes, classes)
         new = incident_detector.analyze(
             camera_id     = camera_id,
-            vehicle_count = vehicles,
+            vehicle_count = len(boxes),
             severity      = "moderate",
             stall_verdict = verdict.to_dict(),
+            # Own state key per replay. IncidentDetector suppresses a second
+            # stalled_vehicle while one is still open for a key, which is right
+            # for live detection but would make a second harness run on the
+            # same camera silently report "not confirmed" and look like a
+            # regression. camera_id itself stays real, so the incidents FK to
+            # cameras(id) still holds.
+            state_key     = replay_key,
         )
         if new and confirmed_at is None:
             confirmed_at = i + 1
@@ -1352,9 +1386,18 @@ async def api_demo_stall(camera_id: str = "caudan_north", frames: int = 80, vehi
             for inc in new:
                 await _save_incident(inc)   # awaited, not backgrounded: caller needs the DB row to exist on return
 
+        for m in range(moving):
+            nxt = move_x[m] + step * move_dir[m]
+            if nxt < 20.0 or nxt > 1100.0:
+                move_dir[m] = -move_dir[m]
+                nxt = move_x[m] + step * move_dir[m]
+            move_x[m] = nxt
+
     return {
         "camera_id":          camera_id,
         "frames_replayed":    frames,
+        "stalled_vehicles":   vehicles,
+        "moving_vehicles":    moving,
         "frame_interval_s":   tracker.frame_interval,
         "frames_required":    tracker._frames_required,
         "confirmed_at_frame": confirmed_at,

@@ -22,18 +22,26 @@ Two independent modes
             should be set from - not a guess.
 
   inject    POST to the running app's admin-only /api/demo/stall, which
-            replays a synthetic, held-still N-vehicle sequence through the
-            real StationaryTracker -> IncidentDetector -> _save_incident ->
+            replays a synthetic N-vehicle sequence through the real
+            StationaryTracker -> IncidentDetector -> _save_incident ->
             incidents table, in-process, using the actual production
             thresholds at the time of the call. Reports whether and when it
             confirmed, then re-checks /api/incidents/active to prove the
             incident is really being served, not just written. Needs the app
             running and an admin login.
 
+  discriminate  Run inject twice and check both answers, which is the only
+            way to show a detector is right rather than merely willing to
+            fire. A stall with traffic moving past it must confirm; a queue
+            where everything stopped together - a red light - must not. Exits
+            non-zero if either case gives the wrong answer, so it can gate a
+            change to the thresholds in detection/stationary_tracker.py.
+
 Usage
 -----
     python tools/incident_harness.py measure --camera caudan_north --frames 20
     python tools/incident_harness.py inject --camera caudan_north --username admin --password ...
+    python tools/incident_harness.py discriminate --username admin --password ...
 """
 
 from __future__ import annotations
@@ -166,10 +174,12 @@ def cmd_inject(args: argparse.Namespace) -> None:
     if not session.cookies:
         sys.exit(f"Login failed (status {resp.status_code}) - check --username/--password.")
 
-    print(f"Logged in as {args.username!r}. Replaying a synthetic "
-          f"{args.vehicles}-vehicle stall on {args.camera!r} ({args.frames} frames) …")
+    print(f"Logged in as {args.username!r}. Replaying {args.vehicles} stopped "
+          f"vehicle(s) and {args.moving} moving on {args.camera!r} "
+          f"({args.frames} frames) …")
     resp = session.post(f"{args.base_url}/api/demo/stall", params={
-        "camera_id": args.camera, "frames": args.frames, "vehicles": args.vehicles,
+        "camera_id": args.camera, "frames": args.frames,
+        "vehicles": args.vehicles, "moving": args.moving,
     })
     resp.raise_for_status()
     result = resp.json()
@@ -177,6 +187,8 @@ def cmd_inject(args: argparse.Namespace) -> None:
     print(f"\nframe_interval used by the tracker : {result['frame_interval_s']}s")
     print(f"frames required to confirm a stall  : {result['frames_required']}")
     print(f"frames replayed                     : {result['frames_replayed']}")
+    print(f"stopped / moving vehicles           : "
+          f"{result['stalled_vehicles']} / {result['moving_vehicles']}")
     if result["confirmed_at_frame"]:
         seconds = result["confirmed_at_frame"] * result["frame_interval_s"]
         print(f"CONFIRMED at frame {result['confirmed_at_frame']} (~{seconds:.0f}s), "
@@ -196,6 +208,101 @@ def cmd_inject(args: argparse.Namespace) -> None:
     for i in stalled:
         print(f"  {i['incident_id'][:8]}  {i['camera_id']}  conf={i['confidence']}  "
               f"{i['description']}")
+
+
+# ── discriminate ─────────────────────────────────────────────────────────────
+
+def _replay(session, base_url: str, camera: str, frames: int,
+            vehicles: int, moving: int) -> dict:
+    resp = session.post(f"{base_url}/api/demo/stall", params={
+        "camera_id": camera, "frames": frames,
+        "vehicles": vehicles, "moving": moving,
+    })
+    resp.raise_for_status()
+    return resp.json()
+
+
+def cmd_discriminate(args: argparse.Namespace) -> None:
+    import requests
+
+    session = requests.Session()
+    resp = session.post(f"{args.base_url}/login",
+                        data={"username": args.username, "password": args.password})
+    if not session.cookies:
+        sys.exit(f"Login failed (status {resp.status_code}) - check --username/--password.")
+
+    cases = [
+        {
+            "name":     "stall with traffic moving past it",
+            "camera":   args.camera_stall,
+            "vehicles": args.vehicles,
+            "moving":   args.moving,
+            "expect":   True,
+            "why":      "vehicles stopped while others keep moving - a breakdown",
+        },
+        {
+            "name":     "queue stopped together (red light)",
+            "camera":   args.camera_queue,
+            "vehicles": args.vehicles + args.moving,
+            "moving":   0,
+            "expect":   False,
+            "why":      "everything stopped together - a signal cycle",
+        },
+        {
+            # Not a pass/fail case: it probes where MIN_STATIONARY_FRACTION
+            # stops a genuine stall from confirming. That threshold predates
+            # the discriminator and pulls the opposite way - it wants most of
+            # the frame stopped, while a stall by definition has traffic
+            # moving around it. At 0.70 a stall confirms only while movers
+            # stay under a third of the tracked vehicles. Reported, not
+            # asserted, so tuning that threshold does not read as a failure.
+            "name":     "stall in busier traffic (boundary probe)",
+            "camera":   args.camera_probe,
+            "vehicles": args.vehicles,
+            "moving":   args.moving + 1,
+            "expect":   None,
+            "why":      "same stall, one more vehicle moving past it",
+        },
+    ]
+
+    print(f"Logged in as {args.username!r}. Each case replays {args.frames} frames "
+          f"through the real tracker and incident pipeline.\n")
+
+    failures = checked = 0
+    for case in cases:
+        r = _replay(session, args.base_url, case["camera"], args.frames,
+                    case["vehicles"], case["moving"])
+        confirmed = r["confirmed_at_frame"] is not None
+        verdict = r["final_verdict"] or {}
+
+        if case["expect"] is None:
+            label = "INFO"
+        else:
+            checked += 1
+            ok = confirmed == case["expect"]
+            failures += 0 if ok else 1
+            label = "PASS" if ok else "FAIL"
+
+        print(f"{label}  {case['name']}")
+        print(f"        {case['why']}")
+        print(f"        {case['vehicles']} stopped, {case['moving']} moving on "
+              f"{case['camera']!r}; {r['frames_required']} frames "
+              f"({r['frame_interval_s']:.2f}s each) required to confirm")
+        if case["expect"] is not None:
+            print(f"        expected {'a confirmed stall' if case['expect'] else 'no incident'}, "
+                  f"got {'confirmed at frame ' + str(r['confirmed_at_frame']) if confirmed else 'none'}")
+        else:
+            print(f"        result: {'confirmed at frame ' + str(r['confirmed_at_frame']) if confirmed else 'no incident'}")
+        print(f"        tracker: stationary={verdict.get('stationary_count')} "
+              f"moving={verdict.get('moving_count')} "
+              f"tracked={verdict.get('total_tracked')} "
+              f"stalled_seconds={verdict.get('stalled_seconds')}")
+        print(f"        reason: {verdict.get('reason')}\n")
+
+    if failures:
+        sys.exit(f"{failures} of {checked} checked case(s) gave the wrong answer.")
+    print(f"Both checked cases correct: a stall beside moving traffic confirms, "
+          f"a queue stopped together does not.")
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -220,10 +327,34 @@ def main() -> None:
     j.add_argument("--camera", default="caudan_north")
     j.add_argument("--frames", type=int, default=80)
     j.add_argument("--vehicles", type=int, default=4)
+    j.add_argument("--moving", type=int, default=1,
+                   help="vehicles that keep moving alongside the stopped ones. "
+                        "0 replays a queue that stopped together, which a "
+                        "correct detector refuses to call a stall - see "
+                        "MIN_MOVING_VEHICLES in detection/stationary_tracker.py.")
     j.add_argument("--base-url", default="http://127.0.0.1:8000")
     j.add_argument("--username", default="admin")
     j.add_argument("--password", required=True)
     j.set_defaults(func=cmd_inject)
+
+    d = sub.add_parser("discriminate",
+                       help="prove a stall confirms and a red-light queue does not")
+    d.add_argument("--camera-stall", default="caudan_north")
+    d.add_argument("--camera-queue", default="caudan_south")
+    d.add_argument("--camera-probe", default="la_chaussee")
+    d.add_argument("--frames", type=int, default=80)
+    d.add_argument("--vehicles", type=int, default=4,
+                   help="vehicles held still in every case")
+    d.add_argument("--moving", type=int, default=1,
+                   help="vehicles moving in the stall case; the queue case "
+                        "replays the same total with none of them moving. "
+                        "Default 1 because MIN_STATIONARY_FRACTION (0.70) "
+                        "rejects a stall once movers pass about a third of "
+                        "the tracked vehicles - the third case probes that.")
+    d.add_argument("--base-url", default="http://127.0.0.1:8000")
+    d.add_argument("--username", default="admin")
+    d.add_argument("--password", required=True)
+    d.set_defaults(func=cmd_discriminate)
 
     args = ap.parse_args()
     args.func(args)
