@@ -31,6 +31,8 @@ python seed_users.py    # seeds the initial accounts
 python check_db.py      # verifies the schema and seed data
 ```
 
+To test password recovery without a real mail server, `pip install aiosmtpd` (a test-only tool, deliberately not in `requirements.txt`) and run `python -m aiosmtpd -n -l localhost:1025` in a second terminal with `SMTP_HOST=localhost`, `SMTP_PORT=1025`, `SMTP_TLS=none` and `SMTP_USER`/`SMTP_PASSWORD` left blank in `.env` - it prints every message it receives, reset link included.
+
 ## Running
 
 ```powershell
