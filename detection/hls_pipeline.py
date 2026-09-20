@@ -6,6 +6,7 @@ Team   : IBL Group - Traffic Bottleneck Detection System traffic summaries
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import statistics
@@ -50,6 +51,27 @@ IOU_THRESHOLD   = 0.35   # looser NMS so queued/overlapping cars aren't merged
 IMGSZ           = int(os.getenv("YOLO_IMGSZ", "1280"))
 SMOOTH_WINDOW   = 3      # smaller window = more responsive at 0.5 fps
 FRAME_INTERVAL  = float(os.getenv("FRAME_INTERVAL", "2.0"))  # seconds between grabs
+
+# -- Frame deduplication ------------------------------------------------------
+# The MYT HLS segments refresh every ~10-11s while this loop polls every ~2.3s,
+# so most grabs re-decode the segment already analysed and hand YOLO pixels it
+# has already seen. That is wasted inference, but the worse cost is in the
+# stall detector: a re-decoded frame yields byte-identical boxes, which reads
+# as displacement of exactly zero - the strongest possible evidence of
+# stillness - so duplicates were accumulating evidence toward a stall verdict.
+#
+# Each grabbed frame is hashed and compared with the previous hash for this
+# camera. On a match the inference and the tracker update are both skipped; the
+# last annotated frame stays in the cache so the live view keeps showing it
+# rather than going blank, and the previous result is re-emitted (marked
+# duplicate_frame) so the interface, the watchdog in main.py and the streak
+# counters in detection/incident_detector.py see the same cadence as before.
+#
+# Set FRAME_DEDUP=0 to process every grab, which is how the before/after
+# measurements in the 2026-09-19 sprint notes were taken.
+DEDUP_ENABLED   = os.getenv("FRAME_DEDUP", "1").lower() not in ("0", "false", "no")
+# How often each camera reports its running duplicate rate.
+DEDUP_LOG_EVERY = int(os.getenv("FRAME_DEDUP_LOG_EVERY", "25"))
 
 # Bounds how many YOLO inferences run at once. Each prediction is already
 # multi-threaded, so letting every camera predict simultaneously makes the
@@ -233,23 +255,34 @@ def _detect_loop(
     tracker = StationaryTracker(frame_interval=FRAME_INTERVAL)
     consecutive_failures = 0
 
+    # Deduplication state: the previous grab's hash, the last result computed
+    # from a frame that was actually new, and running counts for the rate this
+    # camera reports periodically.
+    prev_digest: bytes | None = None
+    last_payload: dict | None = None
+    grabbed_frames = 0
+    duplicate_frames = 0
+
     # Real loop cadence, measured rather than assumed. FRAME_INTERVAL=2.0s is
     # a target, not a guarantee: grab+inference alone was measured at ~2.3s on
     # this deployment (2026-08-07 incident-detection audit), already exceeding
     # the nominal interval, so "sleep the remainder" below contributes ~0 most
     # iterations. StationaryTracker converts STALL_SECONDS_REQUIRED into a
     # frame count using frame_interval - if that's wrong, so is the real-world
-    # wait, so it's kept current from a rolling median of actual loop starts
-    # rather than left at the nominal constant.
+    # wait, so it's kept current from a rolling median rather than left at the
+    # nominal constant.
+    #
+    # With deduplication on, this measures the gap between frames the tracker
+    # actually sees, not between grabs: a skipped duplicate advances no track,
+    # so counting it would make STALL_SECONDS_REQUIRED mean roughly 4x its
+    # stated wall-clock time. Keeping it to processed frames keeps 60s meaning
+    # 60 seconds - at the cost of far fewer observations behind that 60s, which
+    # is recorded in the sprint notes rather than silently compensated for.
     cadence_window: deque[float] = deque(maxlen=10)
-    prev_t_start: float | None = None
+    prev_processed_t: float | None = None
 
     while True:
         t_start = time.perf_counter()
-        if prev_t_start is not None:
-            cadence_window.append(t_start - prev_t_start)
-            tracker.frame_interval = statistics.median(cadence_window)
-        prev_t_start = t_start
 
         frame = _grab_single_frame(hls_urls, width, height)
 
@@ -273,6 +306,48 @@ def _detect_loop(
             continue
 
         consecutive_failures = 0  # reset on any successful grab
+
+        # -- Duplicate frame? ------------------------------------------------
+        # Hashed before the brightness/CLAHE passes, which are deterministic:
+        # identical input pixels give an identical enhanced frame, so hashing
+        # the cheaper raw grab decides the same thing. The array comes straight
+        # from np.frombuffer and is C-contiguous, so it hashes without a copy.
+        digest = hashlib.sha256(frame).digest()
+        is_duplicate = digest == prev_digest
+        prev_digest = digest
+        grabbed_frames += 1
+        if is_duplicate:
+            duplicate_frames += 1
+        if grabbed_frames % DEDUP_LOG_EVERY == 0:
+            logger.info(
+                "[%s] %d/%d grabbed frames were byte-identical to the previous "
+                "one (%.1f%%); inference ran on %d%s",
+                camera_id, duplicate_frames, grabbed_frames,
+                100.0 * duplicate_frames / grabbed_frames,
+                grabbed_frames - duplicate_frames,
+                "" if DEDUP_ENABLED else " (FRAME_DEDUP=0: every grab processed)",
+            )
+
+        if is_duplicate and DEDUP_ENABLED and last_payload is not None:
+            # No inference, no tracker update: the tracker must not read
+            # re-decoded pixels as a vehicle holding still. The annotated frame
+            # in the cache is left alone, so the live view keeps showing it.
+            elapsed = time.perf_counter() - t_start
+            yield {
+                **last_payload,
+                "timestamp":       datetime.now(timezone.utc).isoformat(),
+                "fps_processed":   round(1.0 / max(elapsed, 1e-6), 2),
+                "duplicate_frame": True,
+            }
+            remaining = FRAME_INTERVAL - (time.perf_counter() - t_start)
+            if remaining > 0:
+                time.sleep(remaining)
+            continue
+
+        if prev_processed_t is not None:
+            cadence_window.append(t_start - prev_processed_t)
+            tracker.frame_interval = statistics.median(cadence_window)
+        prev_processed_t = t_start
 
         # ── Brightness boost for dark frames (applied before CLAHE) ──────────
         if cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean() < 80:
@@ -362,7 +437,7 @@ def _detect_loop(
         elapsed       = time.perf_counter() - t_start
         fps_processed = round(1.0 / max(elapsed, 1e-6), 2)
 
-        yield {
+        payload = {
             "camera_id":          camera_id,
             "timestamp":          datetime.now(timezone.utc).isoformat(),
             "vehicle_count":      vehicle_count,
@@ -375,7 +450,10 @@ def _detect_loop(
             "directions":         by_direction,
             "possible_incident":  verdict.is_incident,
             "incident_detail":    verdict.to_dict(),
+            "duplicate_frame":    False,
         }
+        last_payload = payload
+        yield payload
 
         # Sleep the remainder of the frame interval so YOLO time is included
         remaining = FRAME_INTERVAL - (time.perf_counter() - t_start)
