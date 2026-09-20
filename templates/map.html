@@ -63,11 +63,24 @@ Module   : Dashboard UI / Templates
             background: rgba(35,197,94,.1); border: 1px solid rgba(35,197,94,.3);
             color: #23c55e; padding: 4px 12px; border-radius: 20px;
             font-size: 12px; font-weight: 500;
+            transition: background .2s, border-color .2s, color .2s;
         }
         .status-dot {
             width: 6px; height: 6px; background: #23c55e;
             border-radius: 50%; animation: blink 2s infinite; flex-shrink: 0;
+            transition: background .2s;
         }
+        /* Reflect the real WebSocket connection state (see connectWS()) —
+           this used to be static markup that always said "Online" regardless
+           of whether the socket was actually up. */
+        .status-badge.reconnecting {
+            background: rgba(240,136,62,.1); border-color: rgba(240,136,62,.3); color: #f0883e;
+        }
+        .status-badge.reconnecting .status-dot { background: #f0883e; animation: blink 1s infinite; }
+        .status-badge.offline {
+            background: rgba(233,69,96,.1); border-color: rgba(233,69,96,.3); color: #e94560;
+        }
+        .status-badge.offline .status-dot { background: #e94560; animation: none; }
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
 
         .user-info { color: rgba(230,237,243,.6); font-size: 13px; white-space: nowrap; }
@@ -434,9 +447,9 @@ Module   : Dashboard UI / Templates
         </h1>
     </div>
     <div class="navbar-right">
-        <div class="status-badge">
+        <div class="status-badge" id="statusBadge">
             <div class="status-dot"></div>
-            <span class="status-text" id="systemStatus">System Online</span>
+            <span class="status-text" id="systemStatus">Connecting…</span>
         </div>
         <div class="user-info">Logged in as <strong>{{ user }}</strong></div>
         <a href="/analytics" class="nav-analytics" style="color:#58a6ff;font-size:13px;text-decoration:none;white-space:nowrap;">📊 Analytics</a>
@@ -575,7 +588,9 @@ Module   : Dashboard UI / Templates
     </button>
 </div>
 
+{% if is_admin %}
 <button id="demoBtn" onclick="triggerDemo()" title="Trigger demo bottleneck">🎬 Demo</button>
+{% endif %}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
@@ -821,6 +836,18 @@ function routePanelHtml(id, lat, lng) {
         </div>`;
 }
 
+// Labels of any direction the per-direction StationaryTracker verdict has
+// confirmed stalled (see hls_pipeline._detect_loop). Checked separately from
+// the whole-frame possible_incident flag because a single blocked lane next
+// to a flowing one dilutes the whole-frame stopped-fraction below its
+// threshold and never sets that flag at all.
+function blockedDirections(det) {
+    const dirs = det.directions || {};
+    return Object.entries(dirs)
+        .filter(([l, d]) => l !== 'combined' && d.is_incident === true)
+        .map(([l]) => l);
+}
+
 // Per-direction rows. A two-way road where one side is blocked and the other
 // is clear cannot be described by a single severity, so both are shown; an
 // uncalibrated camera reports only "combined" and this renders nothing.
@@ -831,8 +858,12 @@ function directionRowsHtml(det) {
     const rows = labels.sort().map(l => {
         const d = dirs[l];
         const name = l.charAt(0).toUpperCase() + l.slice(1);
-        return `<tr><td style="padding-right:8px;">${escAttr(name)}</td>
-                    <td style="color:${d.color};font-weight:600;">${escAttr(d.severity)}</td>
+        const blocked = d.is_incident === true;
+        const label = blocked ? 'BLOCKED' : d.severity;
+        const color = blocked ? '#e94560' : d.color;
+        const title = blocked && d.reason ? ` title="${escAttr(d.reason)}"` : '';
+        return `<tr${title}><td style="padding-right:8px;">${escAttr(name)}</td>
+                    <td style="color:${color};font-weight:600;">${escAttr(label)}</td>
                     <td style="text-align:right;">${d.vehicle_count}</td></tr>`;
     }).join('');
     return `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;">
@@ -843,11 +874,18 @@ function directionRowsHtml(det) {
 
 // Single source of truth for the badge - it is rendered from two places.
 function incidentBadgeHtml(det) {
-    if (det.possible_incident !== true) return '';
-    const d = det.incident_detail || {};
-    const why = d.reason ? ` title="${escAttr(d.reason)}"` : '';
-    const conf = d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : '';
-    return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
+    if (det.possible_incident === true) {
+        const d = det.incident_detail || {};
+        const why = d.reason ? ` title="${escAttr(d.reason)}"` : '';
+        const conf = d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : '';
+        return `<div${why} style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;cursor:help;">⚠ Incident confirmed${conf}</div>`;
+    }
+    const blocked = blockedDirections(det);
+    if (blocked.length) {
+        const names = blocked.map(l => l.charAt(0).toUpperCase() + l.slice(1)).join(', ');
+        return `<div style="display:inline-block;margin-bottom:6px;padding:2px 8px;background:#e9456022;border:1px solid #e9456088;border-radius:10px;color:#e94560;font-size:11px;font-weight:600;">⚠ ${escAttr(names)} blocked</div>`;
+    }
+    return '';
 }
 
 // ── Live camera streaming (MJPEG) ─────────────────────────────────────────────
@@ -926,10 +964,54 @@ function cameraFrameHtml(id) {
 
 function startFramePolling(id) {   // name kept - called from popupopen/popupclose below
     connectStream(`popFrame_${id}`, `popFramePh_${id}`, `popFrameLive_${id}`, id);
+    startSummaryPolling(id);
 }
 
 function stopFramePolling(id) {
     disconnectStream(`popFrame_${id}`);
+    stopSummaryPolling(id);
+}
+
+// ── AI traffic summary ────────────────────────────────────────────────────────
+// GET /api/summary/{id} returns the same Claude/Gemini/template summary
+// detection/claude_api.py has generated all along - this was never fetched
+// or rendered anywhere in the UI, so the prose (including which direction is
+// blocked, on a calibrated camera) was invisible regardless of how good the
+// generated text was. Polled at a much slower cadence than the frame: the
+// backend regenerates a summary at most every _MIN_SUMMARY_INTERVAL (60s),
+// so anything faster just re-fetches the same cached string.
+const SUMMARY_POLL_MS = 10000;
+const summaryPollers = {};   // camera_id -> interval handle
+
+async function refreshSummary(id) {
+    const el = document.getElementById(`popSummary_${id}`);
+    if (!el) { stopSummaryPolling(id); return; }   // popup no longer in the DOM
+    try {
+        const res = await fetch(`${API_BASE}/api/summary/${id}`);
+        if (!res.ok) { el.style.display = 'none'; return; }
+        const data = await res.json();
+        if (data.summary) {
+            el.textContent = data.summary;
+            el.style.display = 'block';
+        } else {
+            el.style.display = 'none';
+        }
+    } catch (_) {
+        // Transient fetch failure - leave whatever was already shown rather
+        // than blanking a summary that was working a moment ago.
+    }
+}
+
+function startSummaryPolling(id) {
+    stopSummaryPolling(id);
+    refreshSummary(id);
+    summaryPollers[id] = setInterval(() => {
+        if (!document.hidden) refreshSummary(id);
+    }, SUMMARY_POLL_MS);
+}
+
+function stopSummaryPolling(id) {
+    if (summaryPollers[id]) { clearInterval(summaryPollers[id]); delete summaryPollers[id]; }
 }
 
 // ── Camera overview strip ─────────────────────────────────────────────────────
@@ -1027,6 +1109,7 @@ function popupHtml(id, det, loc, color, isHeavy, hasIncident, lat, lng) {
             ${cameraFrameHtml(id)}
             <div id="popSev_${id}" style="color:${color};font-weight:600;font-size:13px;margin-bottom:4px;">${det.severity.toUpperCase()}</div>
             <div id="popBadge_${id}">${incidentBadge}</div>
+            <div id="popSummary_${id}" style="display:none;margin-bottom:8px;padding:6px 8px;background:#f8fafc;border-radius:6px;font-size:12px;color:#444;line-height:1.5;font-style:italic;"></div>
             <table style="font-size:12px;color:#555;width:100%;">
                 <tr><td>Vehicles</td><td><b id="popVeh_${id}">${det.vehicle_count}</b></td></tr>
                 <tr><td>Detection interval</td><td id="popFps_${id}">${detectionIntervalText(det.fps_processed)}</td></tr>
@@ -1126,7 +1209,10 @@ function applyTrafficData(data) {
         if (cameraMarkers[id]) {
             const marker      = cameraMarkers[id];
             const isHeavy     = ['heavy', 'bottleneck'].includes(det.severity);
-            const hasIncident = det.possible_incident === true;
+            // A per-direction stall (see blockedDirections) must trigger the
+            // same incident icon as the whole-frame flag — it's exactly the
+            // case the whole-frame check alone would miss.
+            const hasIncident = det.possible_incident === true || blockedDirections(det).length > 0;
             marker.setIcon(hasIncident ? camIncidentIcon(color) : camIcon(color));
             const lat = loc?.coords[0] ?? 0, lng = loc?.coords[1] ?? 0;
 
@@ -1152,7 +1238,7 @@ function applyTrafficData(data) {
 
         const li = document.createElement('li');
         li.onclick = () => loc && flyTo(loc.coords[0], loc.coords[1], 16);
-        const incidentTag = det.possible_incident === true
+        const incidentTag = (det.possible_incident === true || blockedDirections(det).length > 0)
             ? `<span style="margin-left:4px;padding:1px 5px;background:#f59e0b22;border:1px solid #f59e0b55;border-radius:8px;color:#f59e0b;font-size:9px;font-weight:700;">⚠ INCIDENT</span>`
             : '';
         li.innerHTML = `
@@ -1353,13 +1439,46 @@ async function triggerDemo() {
 }
 
 // ── WebSocket live traffic ────────────────────────────────────────────────────
-const wsUrl = `ws://${window.location.host}/ws/detections`;
+// wss:// when the page itself is HTTPS (main.py serves TLS when cert.pem/
+// key.pem are present) — a browser blocks a plain ws:// socket as mixed
+// content from an https:// page, which would otherwise silently kill live
+// updates on any TLS deployment.
+const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const wsUrl = `${wsProtocol}://${window.location.host}/ws/detections`;
 let _ws = null;
+
+// The status badge used to be static markup that always said "System
+// Online" no matter what the socket was actually doing. This reflects the
+// real connection state instead.
+function setSystemStatus(state) {
+    const badge = document.getElementById('statusBadge');
+    const text  = document.getElementById('systemStatus');
+    if (!badge || !text) return;
+    badge.classList.remove('reconnecting', 'offline');
+    if (state === 'online') {
+        text.textContent = 'System Online';
+    } else if (state === 'reconnecting') {
+        badge.classList.add('reconnecting');
+        text.textContent = 'Reconnecting…';
+    } else {
+        badge.classList.add('offline');
+        text.textContent = 'Connection Lost';
+    }
+}
+
+let _wsFailures = 0;   // consecutive closes without an intervening open
 
 function connectWS() {
     _ws = new WebSocket(wsUrl);
+    _ws.onopen    = () => { _wsFailures = 0; setSystemStatus('online'); };
     _ws.onmessage = e => { try { applyTrafficData(JSON.parse(e.data)); } catch (_) {} };
-    _ws.onclose   = () => setTimeout(connectWS, 3000);
+    _ws.onclose   = () => {
+        _wsFailures++;
+        // A handful of quick retries is normal on page load / a brief blip;
+        // past that it reads as actually down rather than "still connecting".
+        setSystemStatus(_wsFailures >= 3 ? 'offline' : 'reconnecting');
+        setTimeout(connectWS, 3000);
+    };
     _ws.onerror   = () => _ws.close();
 }
 
